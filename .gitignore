@@ -1,0 +1,41 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Updater signing key — NEVER commit. Move .keys/companion-updater.key
+# to a password manager; the .pub half is safe to embed in tauri.conf.json.
+.keys/
+
+# Bundled binaries are large and downloaded by humans (see docs/BUILDING.md)
+src-tauri/binaries/tailscale.msi
+src-tauri/binaries/p4.exe
+
+# Cargo build output — gigabytes, regenerated per build
+src-tauri/target/
+
+# Tauri's auto-generated schema files (per-machine)
+src-tauri/gen/
+
+# Dev-mode log captured by run_companion_dev.bat
+dev-log.txt
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

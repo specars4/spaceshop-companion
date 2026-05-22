@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Changes — submit selected</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    .changes-table {
+      max-height: 360px;
+      overflow-y: auto;
+      border: 1px solid var(--rule);
+      border-radius: var(--radius-s);
+      background: var(--ink-2);
+    }
+    .changes-table::-webkit-scrollbar { width: 8px; }
+    .changes-table::-webkit-scrollbar-track { background: var(--ink-2); }
+    .changes-table::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 4px; }
+    .changes-table::-webkit-scrollbar-thumb:hover { background: var(--gold-dim); }
+
+    .changes-head, .change-row {
+      display: grid;
+      grid-template-columns: 32px 22px 1fr 90px;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 14px;
+    }
+    .changes-head {
+      position: sticky; top: 0; z-index: 2;
+      background: var(--ink-3);
+      border-bottom: 1px solid var(--rule);
+      font-size: 9.5px; text-transform: uppercase; letter-spacing: var(--tracking-caps);
+      color: var(--warm-gray);
+    }
+    .change-row { border-bottom: 1px solid var(--rule); }
+    .change-row:last-child { border-bottom: none; }
+    .change-row:hover { background: var(--ink-3); }
+    .change-row.unchecked { opacity: 0.5; }
+
+    .change-row input[type="checkbox"] {
+      width: 14px; height: 14px;
+      accent-color: var(--gold);
+      cursor: pointer;
+    }
+    .change-row .glyph-cell {
+      font-family: var(--font-mono); font-size: 12px; text-align: center;
+    }
+    .glyph-cell.M { color: var(--gold); }
+    .glyph-cell.A { color: var(--ok); }
+    .glyph-cell.D { color: var(--danger); }
+    .change-row .path-cell {
+      font-family: var(--font-mono); font-size: 12px;
+      color: var(--cream);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .change-row .path-cell .size {
+      font-size: 10px; color: var(--warm-gray); margin-left: 8px;
+    }
+    .change-row .action-cell {
+      display: flex; gap: 4px; justify-content: flex-end;
+    }
+    .row-act {
+      background: transparent; border: 1px solid var(--rule);
+      color: var(--cream-dim); padding: 3px 8px; font-size: 9.5px;
+      text-transform: uppercase; letter-spacing: var(--tracking-caps);
+      border-radius: var(--radius-s); cursor: pointer; font-family: var(--font-sans);
+    }
+    .row-act:hover { color: var(--gold); border-color: var(--gold-dim); }
+    .row-act.danger:hover { color: var(--danger); border-color: var(--danger); }
+
+    .selection-bar {
+      display: flex; align-items: center; gap: 14px;
+      padding: 10px 14px; background: var(--ink-3);
+      border: 1px solid var(--rule);
+      border-radius: var(--radius-s); margin-bottom: 12px;
+      font-size: 11.5px;
+    }
+    .selection-bar .count strong { color: var(--gold); font-family: var(--font-mono); }
+    .selection-bar .quick-actions { margin-left: auto; display: flex; gap: 8px; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header class="header">
+    <span class="bullet">●</span>
+    <span class="wordmark">Spaceshop <em>Studios</em></span>
+    <span style="margin-left: 22px; font-size: 11px; text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--cream-dim);">
+      <a href="home-daily-v2.html" style="border: none; color: var(--cream-dim);">‹ Session 2 smoke</a>
+    </span>
+    <span class="subtitle">C O M P A N I O N</span>
+  </header>
+
+  <main class="app-main">
+    <h1 class="page-title">Your <em>local changes</em></h1>
+    <p class="page-subtitle">
+      11 files differ from the server. Pick which ones to submit, discard the ones you
+      don't want to keep, and leave the rest as work-in-progress.
+    </p>
+
+    <div class="selection-bar">
+      <span class="count"><strong>8</strong> of 11 selected</span>
+      <span style="color: var(--warm-gray);">·</span>
+      <span style="color: var(--cream-dim);">~12.4 MB will be uploaded</span>
+      <div class="quick-actions">
+        <button class="row-act">Select all</button>
+        <button class="row-act">Select none</button>
+        <button class="row-act">Only modified</button>
+      </div>
+    </div>
+
+    <div class="changes-table">
+      <div class="changes-head">
+        <span><input type="checkbox" checked /></span>
+        <span></span>
+        <span>File</span>
+        <span style="text-align: right;">Actions</span>
+      </div>
+
+      <div class="change-row">
+        <input type="checkbox" checked />
+        <span class="glyph-cell M">M</span>
+        <div class="path-cell">shots/SHOT_001/storyboard_v04.psd <span class="size">4.2 MB</span></div>
+        <div class="action-cell">
+          <button class="row-act">Reveal</button>
+          <button class="row-act danger">Discard</button>
+        </div>
+      </div>
+
+      <div class="change-row">
+        <input type="checkbox" checked />
+        <span class="glyph-cell A">+</span>
+        <div class="path-cell">shots/SHOT_002/notes.txt <span class="size">480 B</span></div>
+        <div class="action-cell">
+          <button class="row-act">Reveal</button>
+          <button class="row-act danger">Discard</button>
+        </div>
+      </div>
+
+      <div class="change-row">
+        <input type="checkbox" checked />
+        <span class="glyph-cell D">−</span>
+        <div class="path-cell">shots/SHOT_001/old_take_v01.wav <span class="size">was 12 MB</span></div>
+        <div class="action-cell">
+          <button class="row-act">Reveal</button>
+          <button class="row-act danger">Discard</button>
+        </div>
+      </div>
+
+      <div class="change-row">
+        <input type="checkbox" checked />
+        <span class="glyph-cell M">M</span>
+        <div class="path-cell">shots/SHOT_003/dialogue_v02.wav <span class="size">8.1 MB</span></div>
+        <div class="action-cell">
+          <button class="row-act">Reveal</button>
+          <button class="row-act danger">Discard</button>
+        </div>
+      </div>
+
+      <div class="change-row unchecked">
+        <input type="checkbox" />
+        <span class="glyph-cell M">M</span>
+        <div class="path-cell">shots/index.json <span class="size">2.4 KB</span></div>
+        <div class="action-cell">
+          <button class="row-act">Reveal</button>
+          <button class="row-act danger">Discard</button>
+        </div>
+      </div>
+
+      <div class="change-row">
+        <input type="checkbox" checked />
+        <span class="glyph-cell A">+</span>
+        <div class="path-cell">shots/SHOT_004/storyboard_v01.psd <span class="size">3.8 MB</span></div>
+        <div class="action-cell">
+          <button class="row-act">Reveal</button>
+          <button class="row-act danger">Discard</button>
+        </div>
+      </div>
+
+      <div class="change-row">
+        <input type="checkbox" checked />
+        <span class="glyph-cell A">+</span>
+        <div class="path-cell">shots/SHOT_004/storyboard_v02.psd <span class="size">3.9 MB</span></div>
+        <div class="action-cell">
+          <button class="row-act">Reveal</button>
+          <button class="row-act danger">Discard</button>
+        </div>
+      </div>
+
+      <div class="change-row unchecked">
+        <input type="checkbox" />
+        <span class="glyph-cell M">M</span>
+        <div class="path-cell">project.json <span class="size">1.1 KB</span></div>
+        <div class="action-cell">
+          <button class="row-act">Reveal</button>
+          <button class="row-act danger">Discard</button>
+        </div>
+      </div>
+
+      <div class="change-row">
+        <input type="checkbox" checked />
+        <span class="glyph-cell M">M</span>
+        <div class="path-cell">audio/score_temp_v03.wav <span class="size">28 MB</span></div>
+        <div class="action-cell">
+          <button class="row-act">Reveal</button>
+          <button class="row-act danger">Discard</button>
+        </div>
+      </div>
+
+      <div class="change-row">
+        <input type="checkbox" checked />
+        <span class="glyph-cell A">+</span>
+        <div class="path-cell">audio/sfx_door_slam_v01.wav <span class="size">412 KB</span></div>
+        <div class="action-cell">
+          <button class="row-act">Reveal</button>
+          <button class="row-act danger">Discard</button>
+        </div>
+      </div>
+
+      <div class="change-row unchecked">
+        <input type="checkbox" />
+        <span class="glyph-cell M">M</span>
+        <div class="path-cell">README.md <span class="size">512 B</span></div>
+        <div class="action-cell">
+          <button class="row-act">Reveal</button>
+          <button class="row-act danger">Discard</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top: 6px; font-size: 11px; color: var(--warm-gray); font-style: italic; font-family: var(--font-serif);">
+      <em>Discard</em> throws away your local edits to a file and pulls back the server's version.
+      Files you uncheck stay on your computer as work-in-progress until next time.
+    </div>
+
+    <div class="section-label" style="margin-top: 22px;">D E S C R I B E &nbsp; W H A T &nbsp; C H A N G E D</div>
+    <div class="card">
+      <textarea placeholder="e.g. SHOT_001 — locked the v04 board, removed scratch wav, added director notes for SHOT_002 + SHOT_004" style="min-height: 80px;"></textarea>
+    </div>
+
+    <div class="action-bar">
+      <button class="btn"><span class="glyph">⇡</span> Submit 8 files</button>
+      <button class="btn btn-ghost"><a href="home-daily-v2.html" style="color: inherit; border: none;">Cancel</a></button>
+    </div>
+
+    <div style="margin-top: 16px; font-size: 11px; color: var(--warm-gray); font-family: var(--font-serif); font-style: italic;">
+      Most submissions go through Unreal Engine. This screen is the fallback for files
+      you edited outside Unreal — storyboards, audio, notes.
+    </div>
+  </main>
+
+  <footer class="footer">
+    — A R S E N &nbsp; A R Z U M A N Y A N &nbsp;,&nbsp; S P A C E S H O P &nbsp; S T U D I O S &nbsp;,&nbsp; J E R S E Y &nbsp; C I T Y
+  </footer>
+</div>
+
+<nav class="mock-nav">
+  <span>Mockup:</span>
+  <a href="home-daily-v2.html">daily v2</a>
+  <a href="submit-changes-v2.html" class="active">submit v2</a>
+  <a href="conflict-dialog.html">conflict</a>
+  <a href="force-resync-confirm.html">force re-dl</a>
+  <a href="all-projects-v2.html">all projects v2</a>
+</nav>
+</body>
+</html>

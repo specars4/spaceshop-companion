@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>All projects v2</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+  <header class="header">
+    <span class="bullet">●</span>
+    <span class="wordmark">Spaceshop <em>Studios</em></span>
+    <span class="subtitle">C O M P A N I O N</span>
+  </header>
+
+  <main class="app-main">
+    <h1 class="page-title">Welcome <em>back</em></h1>
+    <p class="page-subtitle">Open a project, or add a new one from an invite.</p>
+
+    <div class="section-label">Y O U R &nbsp; P R O J E C T S</div>
+
+    <!-- Project with both incoming + outgoing changes -->
+    <div class="project-tile">
+      <div>
+        <h3>Session 2 smoke <em style="color: var(--cream-dim); font-style: italic;">— smoke-v4</em></h3>
+        <div style="display: flex; gap: 14px; align-items: center; margin-top: 6px; flex-wrap: wrap;">
+          <span class="status-pill ok">Connected</span>
+          <span style="font-size: 11px; color: var(--warm-gray); font-family: var(--font-mono);">sarah-test · last opened 12 min ago</span>
+        </div>
+        <div style="margin-top: 8px; display: flex; gap: 14px; font-size: 11px;">
+          <span style="color: var(--gold);">● 3 local changes not sent</span>
+          <span style="color: var(--cream-dim);">● 7 changes on server</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-small">Open</button>
+      </div>
+    </div>
+
+    <!-- Project with only incoming changes -->
+    <div class="project-tile">
+      <div>
+        <h3>Pharma <em style="color: var(--cream-dim); font-style: italic;">— Neymarc Q2</em></h3>
+        <div style="display: flex; gap: 14px; align-items: center; margin-top: 6px; flex-wrap: wrap;">
+          <span class="status-pill ok">Connected</span>
+          <span style="font-size: 11px; color: var(--warm-gray); font-family: var(--font-mono);">sarah-contractor · last opened 4 hours ago</span>
+        </div>
+        <div style="margin-top: 8px; font-size: 11px; color: var(--cream-dim);">
+          ● 12 changes on server
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-small">Open</button>
+      </div>
+    </div>
+
+    <!-- Project that's offline -->
+    <div class="project-tile">
+      <div>
+        <h3>AFI <em style="color: var(--cream-dim); font-style: italic;">— Deadline storyboard pass</em></h3>
+        <div style="display: flex; gap: 14px; align-items: center; margin-top: 6px; flex-wrap: wrap;">
+          <span class="status-pill bad">Offline</span>
+          <span style="font-size: 11px; color: var(--warm-gray); font-family: var(--font-mono);">sarah-contractor · last opened 2 days ago</span>
+        </div>
+        <div style="margin-top: 8px; font-size: 11px; color: var(--warm-gray); font-style: italic; font-family: var(--font-serif);">
+          Status from last connection.
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-small">Open</button>
+      </div>
+    </div>
+
+    <!-- Project all caught up -->
+    <div class="project-tile">
+      <div>
+        <h3>AFI <em style="color: var(--cream-dim); font-style: italic;">— Feet</em></h3>
+        <div style="display: flex; gap: 14px; align-items: center; margin-top: 6px; flex-wrap: wrap;">
+          <span class="status-pill ok">Connected</span>
+          <span style="font-size: 11px; color: var(--warm-gray); font-family: var(--font-mono);">sarah-contractor · last opened yesterday</span>
+        </div>
+        <div style="margin-top: 8px; font-size: 11px; color: var(--cream-dim);">
+          Nothing new — you're up to date.
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-small btn-ghost">Open</button>
+      </div>
+    </div>
+
+    <hr class="rule" />
+
+    <div class="section-label">A D D &nbsp; N E W &nbsp; P R O J E C T</div>
+    <div class="card">
+      <textarea placeholder="Paste your invite code here…" style="min-height: 100px; font-family: var(--font-mono); font-size: 11px;"></textarea>
+      <div style="margin-top: 16px;">
+        <button class="btn">Continue</button>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    — A R S E N &nbsp; A R Z U M A N Y A N &nbsp;,&nbsp; S P A C E S H O P &nbsp; S T U D I O S &nbsp;,&nbsp; J E R S E Y &nbsp; C I T Y
+  </footer>
+</div>
+
+<nav class="mock-nav">
+  <span>Mockup:</span>
+  <a href="home-daily-v2.html">daily v2</a>
+  <a href="submit-changes.html">submit</a>
+  <a href="conflict-dialog.html">conflict</a>
+  <a href="force-resync-confirm.html">force re-dl</a>
+  <a href="all-projects-v2.html" class="active">all projects v2</a>
+</nav>
+</body>
+</html>

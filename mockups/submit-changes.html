@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Submit changes</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+  <header class="header">
+    <span class="bullet">●</span>
+    <span class="wordmark">Spaceshop <em>Studios</em></span>
+    <span style="margin-left: 22px; font-size: 11px; text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--cream-dim);">
+      <a href="home-daily-v2.html" style="border: none; color: var(--cream-dim);">‹ Session 2 smoke</a>
+    </span>
+    <span class="subtitle">C O M P A N I O N</span>
+  </header>
+
+  <main class="app-main">
+    <h1 class="page-title">Submit your <em>local changes</em></h1>
+    <p class="page-subtitle">
+      3 files you've edited that aren't on the server yet. Add a short note describing what
+      changed, then submit.
+    </p>
+
+    <div class="card">
+      <div class="section-label" style="margin-bottom: 14px;">F I L E S &nbsp; T O &nbsp; S U B M I T</div>
+
+      <!-- Modified file -->
+      <div style="display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--rule);">
+        <span style="font-family: var(--font-mono); color: var(--gold); font-size: 11px; text-align: center;">M</span>
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 12px; color: var(--cream);">shots/SHOT_001/storyboard_v04.psd</div>
+          <div style="font-size: 10px; color: var(--warm-gray); text-transform: uppercase; letter-spacing: var(--tracking-caps); margin-top: 2px;">Modified · 4.2 MB</div>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn btn-small btn-ghost">Reveal</button>
+          <button class="btn btn-small btn-danger">Discard</button>
+        </div>
+      </div>
+
+      <!-- Added file -->
+      <div style="display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--rule);">
+        <span style="font-family: var(--font-mono); color: var(--ok); font-size: 11px; text-align: center;">+</span>
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 12px; color: var(--cream);">shots/SHOT_002/notes.txt</div>
+          <div style="font-size: 10px; color: var(--warm-gray); text-transform: uppercase; letter-spacing: var(--tracking-caps); margin-top: 2px;">New · 480 B</div>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn btn-small btn-ghost">Reveal</button>
+          <button class="btn btn-small btn-danger">Discard</button>
+        </div>
+      </div>
+
+      <!-- Deleted file -->
+      <div style="display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center; padding: 10px 0;">
+        <span style="font-family: var(--font-mono); color: var(--danger); font-size: 11px; text-align: center;">−</span>
+        <div>
+          <div style="font-family: var(--font-mono); font-size: 12px; color: var(--cream);">shots/SHOT_001/old_take_v01.wav</div>
+          <div style="font-size: 10px; color: var(--warm-gray); text-transform: uppercase; letter-spacing: var(--tracking-caps); margin-top: 2px;">Deleted · was 12 MB</div>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn btn-small btn-ghost">Reveal</button>
+          <button class="btn btn-small btn-danger">Discard</button>
+        </div>
+      </div>
+
+      <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule); font-size: 11px; color: var(--warm-gray); font-style: italic; font-family: var(--font-serif);">
+        <em>Discard</em> on a file throws away your local changes and pulls back the server's version.
+      </div>
+    </div>
+
+    <div class="section-label">D E S C R I B E &nbsp; W H A T &nbsp; C H A N G E D</div>
+    <div class="card">
+      <textarea placeholder="e.g. SHOT_001 — locked the v04 board, removed scratch wav, added director notes for SHOT_002" style="min-height: 80px;"></textarea>
+      <div style="font-size: 10.5px; color: var(--warm-gray); margin-top: 8px;">
+        This shows up in the project history. Be specific — your future self will thank you.
+      </div>
+    </div>
+
+    <div class="action-bar">
+      <button class="btn"><span class="glyph">⇡</span> Submit 3 files</button>
+      <button class="btn btn-ghost"><a href="home-daily-v2.html" style="color: inherit; border: none;">Cancel</a></button>
+    </div>
+
+    <div style="margin-top: 16px; font-size: 11px; color: var(--warm-gray); font-family: var(--font-serif); font-style: italic;">
+      Most submissions go through Unreal Engine. This screen is the fallback for files
+      you edited outside Unreal — storyboards, audio, notes.
+    </div>
+  </main>
+
+  <footer class="footer">
+    — A R S E N &nbsp; A R Z U M A N Y A N &nbsp;,&nbsp; S P A C E S H O P &nbsp; S T U D I O S &nbsp;,&nbsp; J E R S E Y &nbsp; C I T Y
+  </footer>
+</div>
+
+<nav class="mock-nav">
+  <span>Mockup:</span>
+  <a href="home-daily-v2.html">daily v2</a>
+  <a href="submit-changes.html" class="active">submit</a>
+  <a href="conflict-dialog.html">conflict</a>
+  <a href="force-resync-confirm.html">force re-dl</a>
+  <a href="all-projects-v2.html">all projects v2</a>
+</nav>
+</body>
+</html>

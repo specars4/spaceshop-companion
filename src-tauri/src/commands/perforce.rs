@@ -1347,23 +1347,35 @@ pub async fn p4_reveal_in_explorer(local_path: String) -> Result<(), CompanionEr
     use std::process::Command as StdCommand;
 
     let canonical = validate_explorer_path(&local_path)?;
-    // std::fs::canonicalize yields the verbatim "\\?\C:\..." prefix on
-    // Windows. Explorer.exe interprets that prefix literally and opens an
-    // empty window — strip it back to a regular path before invoking.
-    let canonical_str = canonical.to_string_lossy();
-    let cleaned = canonical_str
-        .strip_prefix(r"\\?\")
-        .unwrap_or(&canonical_str)
-        .to_string();
+    let cleaned = strip_canonical_prefix(&canonical);
 
-    // /select takes a path as a single argument. Pass it as TWO separate
-    // args (".arg("/select,")" and ".arg(cleaned)") so the runtime quotes
-    // the path independently and a comma inside the path can't bleed
-    // into the flag.
+    // /select,<path> is the Explorer convention: a SINGLE argument with
+    // the path glued after the comma. Despite the comma, this works
+    // because Explorer parses "/select," as a flag prefix and consumes
+    // the rest of the argument as the path. std::process::Command on
+    // Windows applies CRT-style argv quoting, so embedded spaces survive.
     StdCommand::new("explorer.exe")
         .arg(format!("/select,{}", cleaned))
         .creation_flags(no_window())
         .spawn()
         .map_err(|e| CompanionError::Other(format!("could not open explorer: {e}")))?;
     Ok(())
+}
+
+/// Strip the verbatim prefixes that `std::fs::canonicalize` produces on
+/// Windows so explorer.exe (which interprets them literally and opens an
+/// empty window) gets a normal-looking path.
+///
+/// Local drives:  `\\?\C:\Foo` → `C:\Foo`
+/// UNC paths:     `\\?\UNC\server\share\path` → `\\server\share\path`
+pub(crate) fn strip_canonical_prefix(canonical: &Path) -> String {
+    let s = canonical.to_string_lossy().to_string();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        // Re-add the double-backslash UNC sentinel.
+        return format!(r"\\{}", rest);
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        return rest.to_string();
+    }
+    s
 }

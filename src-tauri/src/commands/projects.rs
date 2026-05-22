@@ -160,11 +160,7 @@ fn open_folder_in_explorer(path: &str) -> Result<(), CompanionError> {
     // require absolute path, canonicalize so ".." segments can't be
     // smuggled. See perforce::validate_explorer_path for rationale.
     let canonical = super::perforce::validate_explorer_path(path)?;
-    let canonical_str = canonical.to_string_lossy();
-    let cleaned = canonical_str
-        .strip_prefix(r"\\?\")
-        .unwrap_or(&canonical_str)
-        .to_string();
+    let cleaned = super::perforce::strip_canonical_prefix(&canonical);
 
     StdCommand::new("explorer.exe")
         .arg(&cleaned)

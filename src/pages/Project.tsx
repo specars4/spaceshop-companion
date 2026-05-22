@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { CopyField } from "../components/CopyField";
 import { ForceResyncConfirm } from "../components/ForceResyncConfirm";
 import {
@@ -56,9 +56,16 @@ export function ProjectView({
 
   // Listen for live pull-progress events from the Rust backend. The
   // backend emits one event per p4 sync line, scoped to a project_id.
+  //
+  // Cleanup pattern: awaiting the listen() promise inside the returned
+  // teardown function ensures we still un-register the listener even
+  // if the component unmounts BEFORE listen() resolves. The naive
+  // `let unlisten = null; listen().then(fn => unlisten = fn)` pattern
+  // races — unmount can run with unlisten still null and the listener
+  // gets permanently registered on a dead component. Matches the
+  // pattern used in Shell.tsx, UpdateBanner.tsx, Welcome.tsx, App.tsx.
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
-    listen<{
+    const unlisten = listen<{
       project_id: string;
       line: string;
       force?: boolean;
@@ -67,11 +74,9 @@ export function ProjectView({
       if (event.payload.project_id !== project.project_id) return;
       setPullLastLine(event.payload.line);
       setPullCount((n) => n + 1);
-    }).then((fn) => {
-      unlisten = fn;
     });
     return () => {
-      if (unlisten) unlisten();
+      unlisten.then((fn) => fn());
     };
   }, [project.project_id]);
 

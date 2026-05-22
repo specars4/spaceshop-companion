@@ -44,9 +44,7 @@
     "windows": {
       "wix": {
         "language": ["en-US"],
-        "upgradeCode": "A375930A-7832-41CE-B9F1-B3BF70C9C073",
-        "fragmentPaths": ["wix/fragment.wxs"],
-        "componentRefs": ["CompanionCloseApp"]
+        "upgradeCode": "A375930A-7832-41CE-B9F1-B3BF70C9C073"
       }
     },
     "shortDescription": "Connect to Spaceshop projects",

@@ -89,6 +89,13 @@ pub async fn up<R: tauri::Runtime>(
     ];
     let (stdout, stderr, code) = run_tailscale(&exe, &args).await?;
     if code != 0 {
+        // Defense-in-depth: tailscale.exe today doesn't echo the auth
+        // key back in error messages, but if it ever does, we don't
+        // want a still-usable single-use key flowing into our friendly
+        // error → React UI → console.log → screenshot pipeline. Scrub
+        // it from both streams before constructing the error.
+        let stderr = stderr.replace(auth_key, "<redacted-auth-key>");
+        let stdout = stdout.replace(auth_key, "<redacted-auth-key>");
         let msg = if !stderr.trim().is_empty() {
             stderr
         } else {

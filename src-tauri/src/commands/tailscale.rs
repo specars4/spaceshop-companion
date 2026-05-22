@@ -186,13 +186,41 @@ pub async fn down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), Co
 pub async fn install_via_msi<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<(), CompanionError> {
-    let msi = PathBuf::from(
+    let src_msi = PathBuf::from(
         paths::tailscale_msi_resource(app).map_err(CompanionError::Tailscale)?,
     );
-    if !msi.exists() {
+    if !src_msi.exists() {
         return Err(CompanionError::Tailscale(format!(
-            "bundled tailscale.msi missing: {}",
-            msi.display()
+            "bundled tailscale.msi missing at expected path: {}",
+            src_msi.display()
+        )));
+    }
+    let src_size = std::fs::metadata(&src_msi).map(|m| m.len()).unwrap_or(0);
+
+    // The bundled MSI lives at C:\Program Files\Spaceshop Companion\resources\
+    // binaries\tailscale.msi — TWO spaces in the path. msiexec invoked via
+    // elevated PowerShell can choke on quoted spacey paths with exit 1619
+    // (ERROR_INSTALL_PACKAGE_OPEN_FAILED) on some Windows configs.
+    //
+    // Workaround: copy the MSI to a no-spaces temp path before handing it
+    // to msiexec. The temp dir is readable by anyone (including elevated
+    // SYSTEM context) and never has spaces under any normal Windows setup.
+    let temp_dir = std::env::temp_dir();
+    let dst_msi = temp_dir.join("spaceshop-companion-tailscale.msi");
+    // Always overwrite — if a previous failed run left a partial file behind
+    // it could itself trigger 1619.
+    std::fs::copy(&src_msi, &dst_msi).map_err(|e| {
+        CompanionError::Tailscale(format!(
+            "could not copy tailscale.msi to temp ({} → {}): {e}",
+            src_msi.display(),
+            dst_msi.display()
+        ))
+    })?;
+    let dst_size = std::fs::metadata(&dst_msi).map(|m| m.len()).unwrap_or(0);
+    if dst_size != src_size {
+        return Err(CompanionError::Tailscale(format!(
+            "tailscale.msi temp copy is the wrong size (src={} bytes, dst={} bytes)",
+            src_size, dst_size
         )));
     }
 
@@ -210,7 +238,7 @@ pub async fn install_via_msi<R: tauri::Runtime>(
     // the process has actually exited and the exit code is readable.
     let ps_command = format!(
         "$p = Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i','\"{}\"','/qn','/norestart','TS_UNATTENDEDMODE=always' -Verb RunAs -PassThru; $p.WaitForExit(); $p.ExitCode",
-        msi.display()
+        dst_msi.display()
     );
 
     let mut cmd = Command::new("powershell.exe");
@@ -227,15 +255,21 @@ pub async fn install_via_msi<R: tauri::Runtime>(
         .map_err(|_| CompanionError::Tailscale("msi install timed out (>5 min)".into()))?
         .map_err(|e| CompanionError::Tailscale(format!("msi install wait failed: {e}")))?;
 
+    // Best-effort cleanup of the temp copy regardless of outcome.
+    let _ = std::fs::remove_file(&dst_msi);
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         return Err(CompanionError::Tailscale(format!(
-            "msi install failed: {}",
-            stderr.trim()
+            "powershell failed launching msiexec (stderr: {}, src={}, dst={}, size={} bytes)",
+            stderr.trim(),
+            src_msi.display(),
+            dst_msi.display(),
+            src_size,
         )));
     }
-    // PowerShell's Select-Object prints the exit code of msiexec. 0 = success,
-    // 3010 = success-but-reboot-required, 1602 = user-cancelled UAC.
+    // PowerShell prints msiexec's ExitCode. 0 = success, 3010 = reboot required,
+    // 1602/1603 = user cancelled UAC, 1619 = could not open package, etc.
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let exit: i32 = stdout.parse().unwrap_or(0);
     match exit {
@@ -243,8 +277,19 @@ pub async fn install_via_msi<R: tauri::Runtime>(
         1602 | 1603 => Err(CompanionError::Tailscale(
             "Permission denied. Click Yes on the Windows permission prompt next time.".into(),
         )),
+        1619 => Err(CompanionError::Tailscale(format!(
+            "Tailscale installer could not be opened (exit 1619). \
+             Tried path: {}. Source: {} ({} bytes). \
+             As a workaround, install Tailscale manually from https://tailscale.com/download/windows then click Try Again.",
+            dst_msi.display(),
+            src_msi.display(),
+            src_size,
+        ))),
         other => Err(CompanionError::Tailscale(format!(
-            "Tailscale installer failed (exit {other})"
+            "Tailscale installer failed (exit {other}). Source: {} ({} bytes). Temp copy: {}.",
+            src_msi.display(),
+            src_size,
+            dst_msi.display(),
         ))),
     }
 }

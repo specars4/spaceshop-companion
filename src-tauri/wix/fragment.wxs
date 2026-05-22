@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Spaceshop Companion - Wix fragment for graceful upgrades.
+
+  Adds util:CloseApplication so MSI's Restart Manager closes a running
+  Companion.exe before files are replaced during an in-place upgrade.
+  Without this, the in-app updater hits "files in use" errors when the
+  user runs the auto-update from inside the running app.
+
+  Wired into the installer via tauri.conf.json -> bundle.windows.wix:
+      "fragmentPaths": ["wix/fragment.wxs"]
+      "componentRefs": ["CompanionCloseApp"]
+
+  Tauri 2.x bundler links WixUtilExtension by default (see
+  tauri-bundler/src/bundle/windows/msi/mod.rs, fragment_extensions),
+  and the candle.exe regex scan picks up the xmlns:util declaration
+  below to confirm the -ext arg.
+
+  NOTE on MajorUpgrade: Tauri's embedded main.wxs already emits
+
+      <MajorUpgrade Schedule="afterInstallInitialize"
+                    DowngradeErrorMessage="!(loc.DowngradeErrorMessage)"
+                    AllowSameVersionUpgrades="yes" />
+
+  so we don't redeclare it here (only one MajorUpgrade element is
+  allowed per Product). MigrateFeatures is "yes" by default in Wix.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  <Fragment>
+    <!--
+      Component must live in a Directory. TARGETDIR is the canonical
+      "this component is not file-bound" parent. The component carries
+      a tiny HKCU registry KeyPath because every component needs one,
+      and util:CloseApplication is not itself a valid KeyPath.
+    -->
+    <DirectoryRef Id="TARGETDIR">
+      <Component Id="CompanionCloseApp"
+                 Guid="B5E7A6C2-3F9B-4D8E-9A11-7C2E4F8B6D40"
+                 Win64="yes">
+        <RegistryValue Root="HKCU"
+                       Key="Software\Spaceshop Studios\Companion"
+                       Name="CloseAppMarker"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+        <!--
+          Target  = process image name to look for and close.
+          CloseMessage = "yes" -> send WM_CLOSE for graceful shutdown.
+          RebootPrompt = "no"  -> never schedule a reboot for this app.
+          TerminateProcess = 5000 -> if WM_CLOSE doesn't land in 5s,
+                                     kill the process so the upgrade
+                                     can proceed (we'd rather a hard
+                                     kill than a stuck installer).
+        -->
+        <util:CloseApplication Id="CloseSpaceshopCompanion"
+                               Target="spaceshop-companion.exe"
+                               CloseMessage="yes"
+                               RebootPrompt="no"
+                               TerminateProcess="5000" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>

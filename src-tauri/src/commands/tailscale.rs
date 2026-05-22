@@ -137,8 +137,29 @@ pub async fn status<R: tauri::Runtime>(
         }));
     }
 
-    let parsed: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|e| CompanionError::Tailscale(format!("status JSON unparseable: {e}")))?;
+    // Defensive parse: tailscale.exe occasionally emits partial JSON while
+    // the service is still warming up after install. Treat unparseable
+    // output as "Unknown / not up" rather than bubbling an Err that
+    // upstream callers would interpret as "couldn't determine state →
+    // skip install". A genuine "tailscale.exe missing" case was already
+    // handled at the top of this function via the exe.exists() check,
+    // so a parse failure here genuinely is "tailscaled is alive but
+    // not yet emitting valid status JSON."
+    let parsed: serde_json::Value = match serde_json::from_str(&stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                "tailscale status returned unparseable JSON ({} bytes): {e}",
+                stdout.len()
+            );
+            return Ok(TailscaleStatus {
+                up: false,
+                backend_state: "Unknown".into(),
+                self_ip: None,
+                tailnet_name: None,
+            });
+        }
+    };
 
     let backend_state = parsed
         .get("BackendState")
@@ -206,7 +227,14 @@ pub async fn install_via_msi<R: tauri::Runtime>(
     // to msiexec. The temp dir is readable by anyone (including elevated
     // SYSTEM context) and never has spaces under any normal Windows setup.
     let temp_dir = std::env::temp_dir();
-    let dst_msi = temp_dir.join("spaceshop-companion-tailscale.msi");
+    // Include the current process id in the temp filename so two users
+    // running install simultaneously on a shared box (or two failed runs
+    // overlapping) don't trample each other's MSI copies. Each process
+    // owns its own file from copy through cleanup.
+    let dst_msi = temp_dir.join(format!(
+        "spaceshop-companion-tailscale-{}.msi",
+        std::process::id()
+    ));
     // Always overwrite — if a previous failed run left a partial file behind
     // it could itself trigger 1619.
     std::fs::copy(&src_msi, &dst_msi).map_err(|e| {

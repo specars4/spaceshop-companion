@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { CopyField } from "../components/CopyField";
 import { ForceResyncConfirm } from "../components/ForceResyncConfirm";
 import {
@@ -45,12 +46,39 @@ export function ProjectView({
   const [unrealError, setUnrealError] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const [updateErrorDetails, setUpdateErrorDetails] = useState<string | null>(
+    null,
+  );
+  const [pullCount, setPullCount] = useState<number>(0);
+  const [pullLastLine, setPullLastLine] = useState<string>("");
   const [removeConfirmText, setRemoveConfirmText] = useState("");
   const removeArmed = removeConfirmText.trim().toLowerCase() === "yes";
+
+  // Listen for live pull-progress events from the Rust backend. The
+  // backend emits one event per p4 sync line, scoped to a project_id.
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    listen<{
+      project_id: string;
+      line: string;
+      force?: boolean;
+      relocating?: boolean;
+    }>("pull-progress", (event) => {
+      if (event.payload.project_id !== project.project_id) return;
+      setPullLastLine(event.payload.line);
+      setPullCount((n) => n + 1);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [project.project_id]);
 
   async function handleCheckForUpdates() {
     setCheckingUpdate(true);
     setUpdateStatus(null);
+    setUpdateErrorDetails(null);
     try {
       const info = (await invoke("check_for_updates")) as UpdateInfo | null;
       if (info) {
@@ -63,11 +91,12 @@ export function ProjectView({
     } catch (err) {
       const e = err as { body?: string; title?: string; details?: string };
       const head = e?.body ?? e?.title ?? "Update check failed.";
-      // Surface the raw error too so it's possible to diagnose what
-      // actually failed (network vs signature vs parse vs ...). Without
-      // this, the friendly translator hides the only useful information.
-      const msg = e?.details ? `${head} (${e.details})` : head;
-      setUpdateStatus(msg);
+      // Friendly message stays in the status line; the raw `details`
+      // from Tauri's updater goes into a collapsed disclosure below so
+      // we can diagnose what actually failed (network vs signature vs
+      // parse vs ...) without polluting the happy-path UI.
+      setUpdateStatus(head);
+      setUpdateErrorDetails(e?.details ?? null);
     } finally {
       setCheckingUpdate(false);
     }
@@ -91,6 +120,8 @@ export function ProjectView({
   async function handlePull() {
     setPulling(true);
     setPullMessage(null);
+    setPullCount(0);
+    setPullLastLine("");
     const start = Date.now();
     try {
       const n = await pullLatest(project.project_id);
@@ -108,6 +139,8 @@ export function ProjectView({
       setPullMessage(`✗ Pull failed: ${e?.body ?? e?.title ?? "unknown error"}`);
     } finally {
       setPulling(false);
+      setPullCount(0);
+      setPullLastLine("");
     }
   }
 
@@ -137,6 +170,8 @@ export function ProjectView({
     setShowForceConfirm(false);
     setPulling(true);
     setPullMessage("Force re-downloading…");
+    setPullCount(0);
+    setPullLastLine("");
     try {
       const n = await forceResync(project.project_id);
       setPullMessage(`Force re-download complete (${n} files).`);
@@ -146,6 +181,8 @@ export function ProjectView({
       setPullMessage(e?.body ?? "Force re-download failed.");
     } finally {
       setPulling(false);
+      setPullCount(0);
+      setPullLastLine("");
     }
   }
 
@@ -356,6 +393,20 @@ export function ProjectView({
         </div>
       </div>
 
+      {pulling && pullCount > 0 && (
+        <div
+          style={{
+            marginBottom: 14,
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            color: "var(--cream-dim)",
+            paddingTop: 4,
+          }}
+        >
+          {pullCount} files · {truncate(pullLastLine, 90)}
+        </div>
+      )}
+
       {pullMessage && (
         <div
           style={{
@@ -469,6 +520,37 @@ export function ProjectView({
                 </span>
               )}
             </div>
+            {updateErrorDetails && (
+              <details
+                style={{
+                  marginTop: 8,
+                  fontSize: 11,
+                  color: "var(--warm-gray)",
+                }}
+              >
+                <summary style={{ cursor: "pointer", userSelect: "none" }}>
+                  Show technical details
+                </summary>
+                <pre
+                  style={{
+                    marginTop: 6,
+                    padding: "8px 10px",
+                    background: "var(--ink-2)",
+                    border: "1px solid var(--rule)",
+                    borderRadius: "var(--radius-s)",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 11,
+                    color: "var(--cream-dim)",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    maxHeight: 200,
+                    overflow: "auto",
+                  }}
+                >
+                  {updateErrorDetails}
+                </pre>
+              </details>
+            )}
           </div>
           <div style={{ borderTop: "1px solid var(--rule)", paddingTop: 14 }}>
             <div
@@ -653,6 +735,11 @@ function shortenPath(p: string): string {
   const parts = p.split(/[\\/]/);
   if (parts.length < 3) return p;
   return `…\\${parts.slice(-2).join("\\")}`;
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return "…" + s.slice(s.length - max);
 }
 
 function relativeTime(iso: string): string {

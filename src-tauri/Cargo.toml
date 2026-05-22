@@ -1,6 +1,6 @@
 [package]
 name = "spaceshop-companion"
-version = "0.5.8"
+version = "0.5.9"
 description = "Spaceshop Companion — contractor onboarding for Spaceshop projects"
 authors = ["Spaceshop Studios"]
 edition = "2021"
@@ -9,8 +9,11 @@ edition = "2021"
 name = "spaceshop_companion_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Tauri is pinned to 2.11.x. Do NOT auto-bump to 2.12+ without a sandbox
+# test — Tauri issue #14614 reports a startup-hang regression on newer
+# minors. Current installed: tauri 2.11.2, tauri-build 2.x matching.
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.6", features = [] }
 
 # ---- Dev-iteration speed tuning ----
 # The big-binary link step dominates wall-time on every `tauri dev` restart.
@@ -38,7 +41,7 @@ debug = false
 opt-level = 1
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
 tauri-plugin-store = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"

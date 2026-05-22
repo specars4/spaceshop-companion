@@ -29,6 +29,13 @@ src-tauri/gen/
 # Dev-mode log captured by run_companion_dev.bat
 dev-log.txt
 
+# Windows Sandbox smoke-test artifacts — keep the harness (smoke.wsb,
+# run.ps1, README.md), exclude the MSI under test and the run artifacts.
+smoke/*.msi
+smoke/transcript.txt
+smoke/msi.log
+smoke/*.log
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

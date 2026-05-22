@@ -1,0 +1,12 @@
+# Pin to rustc 1.94.0 to dodge STATUS_ACCESS_VIOLATION codegen crashes
+# observed on 1.95 during release builds of spaceshop-companion (the
+# profile.release.package.spaceshop-companion opt-level=1 workaround in
+# Cargo.toml was the prior mitigation; this pin is the root-cause fix).
+#
+# rustup auto-installs this toolchain on first cargo invocation if the
+# user doesn't have it. CI machines pick it up identically.
+[toolchain]
+channel = "1.94.0"
+profile = "minimal"
+components = ["rustc", "cargo", "rust-std", "rustfmt", "clippy"]
+targets = ["x86_64-pc-windows-msvc"]

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Spaceshop Companion",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "identifier": "studio.spaceshop.companion",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -28,7 +28,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
+    "targets": ["msi"],
     "createUpdaterArtifacts": true,
     "resources": {
       "binaries/p4.exe": "binaries/p4.exe",
@@ -44,10 +44,9 @@
     "windows": {
       "wix": {
         "language": ["en-US"],
-        "upgradeCode": "A375930A-7832-41CE-B9F1-B3BF70C9C073"
-      },
-      "nsis": {
-        "installMode": "currentUser"
+        "upgradeCode": "A375930A-7832-41CE-B9F1-B3BF70C9C073",
+        "fragmentPaths": ["wix/fragment.wxs"],
+        "componentRefs": ["CompanionCloseApp"]
       }
     },
     "shortDescription": "Connect to Spaceshop projects",

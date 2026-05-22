@@ -48,8 +48,30 @@ pub fn run() {
         })
         .setup(|app| {
             // First-run: copy bundled binaries from resources to bin dir.
+            // If this fails, every downstream p4/tailscale call will spawn-fail
+            // with a cryptic "could not spawn p4". Surface a structured
+            // startup-error event so the frontend can show a friendly
+            // "Companion couldn't unpack its tools, reinstall and try again"
+            // banner. Capture the failure on the AppHandle (we can't emit
+            // here yet — no webview window listeners are wired up — so we
+            // re-emit on a short delay).
             if let Err(e) = commands::bundled::ensure_binaries(app.handle()) {
-                warn!("bundled binaries setup: {e}");
+                warn!("bundled binaries setup failed: {e}");
+                let handle_for_err = app.handle().clone();
+                let err_msg = e.clone();
+                tauri::async_runtime::spawn(async move {
+                    // Give the webview a moment to mount listeners.
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    let _ = handle_for_err.emit(
+                        "startup-error",
+                        serde_json::json!({
+                            "kind": "bundled-binaries",
+                            "title": "Companion couldn't unpack its tools",
+                            "body": "Reinstall Spaceshop Companion and try again.",
+                            "details": err_msg,
+                        }),
+                    );
+                });
             }
 
             // Restore persisted projects.

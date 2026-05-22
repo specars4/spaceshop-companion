@@ -105,13 +105,50 @@ const TAILSCALE_KEY_USED: &[&str] = &[
     "invalid key",
 ];
 
-const UPDATE_ENDPOINT_PHRASES: &[&str] = &[
-    "update endpoint",
+/// True "couldn't reach the update server" — DNS, TCP connect, timeout,
+/// refused connection, TLS handshake failure. The fix is "check your
+/// internet." Distinct from UPDATE_VERIFY_PHRASES below because the
+/// remediation advice differs.
+const UPDATE_NETWORK_PHRASES: &[&str] = &[
+    "could not reach",
+    "could not connect",
+    "connection refused",
+    "connection timed out",
+    "connection reset",
+    "dns",
+    "name resolution",
+    "tls handshake",
+    "network is unreachable",
+    "no route to host",
+    "timed out",
+];
+
+/// "We reached the server but couldn't trust / parse what came back."
+/// Includes signature mismatches (minisign), malformed JSON, schema
+/// errors, missing fields. The fix is usually "your installer's
+/// signing key is older than the server's release manifest — you need
+/// a fresher installer from the project lead." Configuration-placeholder
+/// errors land here too — same UX (user can't act except by reinstalling
+/// or asking for a new build).
+const UPDATE_VERIFY_PHRASES: &[&str] = &[
     "could not fetch a valid release json",
-    "update check failed",
-    "no update available",
+    "signature mismatch",
+    "minisign",
+    "signature verification",
+    "could not verify",
+    "release json",
     "endpoint not configured",
     "placeholder in tauri.conf.json",
+    "update endpoint",
+];
+
+/// Generic update-check failure phrases that don't fit either bucket.
+/// We classify these as verify-ish (treat as benign, don't blame the
+/// network) because they typically come from no-update-available or
+/// "no release found" cases that aren't actionable for the user.
+const UPDATE_GENERIC_PHRASES: &[&str] = &[
+    "update check failed",
+    "no update available",
 ];
 
 const STREAM_CLIENT_PHRASES: &[&str] = &[
@@ -122,11 +159,31 @@ const STREAM_CLIENT_PHRASES: &[&str] = &[
 pub fn translate(raw: &str) -> FriendlyError {
     let lc = raw.to_lowercase();
 
-    if UPDATE_ENDPOINT_PHRASES.iter().any(|p| lc.contains(p)) {
+    // Check verify-class FIRST: a "signature mismatch" message often also
+    // mentions "could not" / similar substrings that would match
+    // network-class. Verify failures are more specific so they win the
+    // classification race.
+    if UPDATE_VERIFY_PHRASES.iter().any(|p| lc.contains(p)) {
+        return FriendlyError::new(
+            "Update couldn't be verified",
+            "Companion downloaded an update but couldn't confirm it's legitimate.",
+            "Your installer may be older than the current signing key. Re-download Companion from the link your project lead originally sent you to refresh it.",
+            raw,
+        );
+    }
+    if UPDATE_NETWORK_PHRASES.iter().any(|p| lc.contains(p)) {
+        return FriendlyError::new(
+            "Couldn't reach update server",
+            "Companion can't reach the update server right now.",
+            "Check your internet connection and try again. Companion will keep working in the meantime.",
+            raw,
+        );
+    }
+    if UPDATE_GENERIC_PHRASES.iter().any(|p| lc.contains(p)) {
         return FriendlyError::new(
             "Update check unavailable",
-            "Companion couldn't reach the update server.",
-            "This is expected if the GitHub release endpoint hasn't been set up yet — Companion will keep working. Once configured, updates appear here automatically.",
+            "Companion couldn't complete the update check.",
+            "This is usually temporary — Companion will keep working and try again next launch.",
             raw,
         );
     }

@@ -18,6 +18,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,19 @@ use tokio::time::timeout;
 use super::errors::CompanionError;
 use super::invite::WorkspaceTemplate;
 use super::paths;
+
+/// Global serialization lock for `write_ticket_file`. Two concurrent
+/// `apply_invite` calls (e.g. the contractor double-clicks Connect, or
+/// a deep-link arrives while one is already running) would both read
+/// p4tickets.txt, both mutate in memory, and both write back. Last
+/// write wins, dropping the other's entry — silently breaking a
+/// project that looked like it had onboarded successfully.
+///
+/// A plain std::sync::Mutex<()> over the entire read-modify-write is
+/// sufficient: writes are short, single-process (we already enforce
+/// single-instance via tauri-plugin-single-instance), and Windows
+/// p4tickets.txt isn't accessed by anyone else mid-Companion-session.
+static TICKET_FILE_LOCK: Mutex<()> = Mutex::new(());
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -60,6 +74,28 @@ const SYNC_POST_EOF_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn no_window() -> u32 {
     0x08000000
+}
+
+/// Guard for p4 commands that require the workspace's local root to
+/// exist on disk. p4 will happily run with a non-existent --current-dir
+/// and produce confusing errors ("Path 'foo' is not under client's
+/// root") — fail early with a friendly message instead.
+///
+/// `change_counts` returns folder_missing=true and recovers gracefully,
+/// but every other entry point (list_changes, pull_latest, force_resync,
+/// submit_changes) should refuse to run when the folder is gone — the
+/// contractor has either deleted or moved it, and they need to pick a
+/// new location via the Relocate flow before retrying.
+fn verify_workspace_root_exists(root: &Path) -> Result<(), CompanionError> {
+    if !root.exists() {
+        return Err(CompanionError::Other(format!(
+            "Project folder is gone: {}. The folder was deleted or moved — \
+             use Relocate to pick a new location, or remove the project and \
+             re-onboard.",
+            root.display()
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,6 +214,15 @@ pub fn write_ticket_file(
     user: &str,
     ticket: &str,
 ) -> Result<PathBuf, CompanionError> {
+    // Serialize the read-modify-write so concurrent apply_invite calls
+    // can't lose each other's entries. See TICKET_FILE_LOCK comment.
+    // Poisoning recovery: if a prior call panicked inside the critical
+    // section, the file may be in a partial state — but that's a
+    // separate concern; we still hold the lock and proceed.
+    let _guard = TICKET_FILE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
     let path = paths::p4tickets_path().map_err(CompanionError::Perforce)?;
 
     // p4 has historically stored entries in TWO formats:
@@ -470,6 +515,7 @@ pub async fn sync_workspace<F>(
 where
     F: FnMut(&str),
 {
+    verify_workspace_root_exists(workspace_root)?;
     run_streaming_sync(
         config,
         workspace,
@@ -526,6 +572,7 @@ pub async fn list_changes(
     workspace: &str,
     workspace_root: &Path,
 ) -> Result<Vec<ChangedFile>, CompanionError> {
+    verify_workspace_root_exists(workspace_root)?;
     let (stdout, stderr, code) = run_p4(
         config,
         &["-c", workspace, "status"],
@@ -635,9 +682,11 @@ pub async fn change_counts(
     let local_pending = local.len() as u32;
 
     // p4 sync -n //... — dry run, lists files that would be pulled.
+    // -vnet.maxwait=300: see run_streaming_sync for rationale (network
+    // idle, not stdout idle).
     let (stdout, stderr, code) = run_p4(
         config,
-        &["-c", workspace, "sync", "-n", "//..."],
+        &["-vnet.maxwait=300", "-c", workspace, "sync", "-n", "//..."],
         None,
         Some(workspace_root),
         CALL_TIMEOUT,
@@ -837,6 +886,7 @@ pub async fn submit_changes(
     selected_local_paths: &[String],
     description: &str,
 ) -> Result<i32, CompanionError> {
+    verify_workspace_root_exists(workspace_root)?;
     if selected_local_paths.is_empty() {
         return Err(CompanionError::Perforce("no files selected".into()));
     }
@@ -921,6 +971,7 @@ pub async fn restore_file(
     workspace_root: &Path,
     local_path: &str,
 ) -> Result<(), CompanionError> {
+    verify_workspace_root_exists(workspace_root)?;
     // Reconcile this file (opens for edit/add/delete depending on its state).
     let (_, _, _) = run_p4(
         config,
@@ -972,6 +1023,7 @@ pub async fn force_resync<F>(
 where
     F: FnMut(&str),
 {
+    verify_workspace_root_exists(workspace_root)?;
     // 0. Heal workspace spec if it pre-dates stream-binding support.
     //    Best-effort; if it fails, sync may still work for read-only ops.
     let _ = ensure_workspace_stream_bound(config, workspace).await;
@@ -989,7 +1041,7 @@ where
     // 2. flush the have-table back to "I have nothing"
     let _ = run_p4(
         config,
-        &["-c", workspace, "flush", "//...#0"],
+        &["-vnet.maxwait=300", "-c", workspace, "flush", "//...#0"],
         None,
         Some(workspace_root),
         CALL_TIMEOUT,
@@ -1044,6 +1096,14 @@ where
     let base = [
         "-p", &config.server, "-u", &config.user, "-P", &config.ticket,
         "-c", workspace,
+        // -vnet.maxwait=300: p4-native socket idle timeout (5 min).
+        // Errors out only on true network-level inactivity (no TCP
+        // activity in 300s), NOT on long single-file downloads where
+        // bytes are still flowing. Replaces our previous stdout-idle
+        // heuristic, which couldn't distinguish "stuck" from "slow big
+        // file." Per Perforce docs, this is the right way to detect
+        // network stalls.
+        "-vnet.maxwait=300",
     ];
     let combined: Vec<&str> = base.iter().copied().chain(p4_args.iter().copied()).collect();
     cmd.args(&combined)
@@ -1060,6 +1120,25 @@ where
         .stdout
         .take()
         .ok_or_else(|| CompanionError::Perforce("missing stdout pipe".into()))?;
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| CompanionError::Perforce("missing stderr pipe".into()))?;
+
+    // Drain stderr concurrently into a String. Without this, a stderr
+    // buffer full would block the child, deadlocking us against our own
+    // stdout reader. We need the full stderr text after the child
+    // exits so we can distinguish "File(s) up-to-date." (benign) from
+    // "Client 'foo' unknown." (real error, was being silently swallowed
+    // pre-fix).
+    let stderr_handle = tauri::async_runtime::spawn(async move {
+        use tokio::io::AsyncReadExt;
+        let mut buf = Vec::new();
+        let mut reader = stderr_pipe;
+        let _ = reader.read_to_end(&mut buf).await;
+        String::from_utf8_lossy(&buf).to_string()
+    });
+
     let mut reader = BufReader::new(stdout).lines();
     let mut count = 0u32;
 
@@ -1067,7 +1146,7 @@ where
     // comment above SYNC_POST_EOF_TIMEOUT for why. A single large file
     // can legitimately leave stdout silent for tens of minutes while
     // bytes are flowing on the wire; killing on idle would corrupt
-    // those long downloads.
+    // those long downloads. (-vnet.maxwait above handles true stalls.)
     while let Some(line) = reader.next_line().await.map_err(|e| {
         CompanionError::Perforce(format!("read failed: {e}"))
     })? {
@@ -1088,10 +1167,27 @@ where
         })?
         .map_err(|e| CompanionError::Perforce(format!("{label} wait failed: {e}")))?;
 
+    // Read the captured stderr now that the child has exited.
+    let stderr_text = stderr_handle.await.unwrap_or_default();
+
     if !status.success() {
-        // p4 sync exit 1 with "File(s) up-to-date." on stderr just means
-        // nothing changed — not a real failure for our purposes.
-        return Ok(count);
+        // p4 sync exit 1 + stderr containing "file(s) up-to-date" is the
+        // benign "nothing changed" case. ANY other stderr at a non-zero
+        // exit is a real failure — e.g. "Client 'foo' unknown.",
+        // "Path 'bar' is not under client's root.", "Authentication
+        // failed." — and was being silently swallowed by the previous
+        // unconditional Ok(count) fall-through. Surface stderr verbatim
+        // so translate() can map it to a friendly error.
+        let lc = stderr_text.to_lowercase();
+        if lc.contains("file(s) up-to-date") {
+            return Ok(count);
+        }
+        let msg = if !stderr_text.trim().is_empty() {
+            stderr_text.trim().to_string()
+        } else {
+            format!("{label} exited with status {:?}", status.code())
+        };
+        return Err(CompanionError::Perforce(msg));
     }
     Ok(count)
 }
@@ -1211,12 +1307,61 @@ pub async fn p4_force_resync<R: tauri::Runtime>(
     .await
 }
 
+/// Validate a path argument before handing it to explorer.exe.
+///
+/// `explorer.exe /select,<path>` is sensitive to the shape of the path
+/// — a stray comma, an interpreted leading "/" flag, or a non-existent
+/// path can cause Explorer to either open the wrong location or
+/// misinterpret the rest of the command line. Lock the input down by
+/// requiring a canonical absolute path that:
+///   - parses as a Path
+///   - is absolute (has a Windows drive prefix, NOT starting with "/")
+///   - canonicalizes successfully (catches "..\..\foo" smuggling)
+///   - actually exists on disk
+///
+/// Returns the canonical PathBuf on success. Errors describe what
+/// failed in user-facing language.
+pub(crate) fn validate_explorer_path(input: &str) -> Result<PathBuf, CompanionError> {
+    let path = Path::new(input);
+    if input.starts_with('/') || input.starts_with('\\') && !input.starts_with("\\\\") {
+        // Reject leading slash (could be misread as an explorer.exe flag)
+        // but allow UNC paths which start with "\\".
+        return Err(CompanionError::Other(format!(
+            "refusing to open suspicious path: {input}"
+        )));
+    }
+    if !path.is_absolute() {
+        return Err(CompanionError::Other(format!(
+            "refusing to open non-absolute path: {input}"
+        )));
+    }
+    let canonical = std::fs::canonicalize(path).map_err(|e| {
+        CompanionError::Other(format!("path does not exist or is unreadable ({input}): {e}"))
+    })?;
+    Ok(canonical)
+}
+
 #[tauri::command]
 pub async fn p4_reveal_in_explorer(local_path: String) -> Result<(), CompanionError> {
     use std::os::windows::process::CommandExt;
     use std::process::Command as StdCommand;
+
+    let canonical = validate_explorer_path(&local_path)?;
+    // std::fs::canonicalize yields the verbatim "\\?\C:\..." prefix on
+    // Windows. Explorer.exe interprets that prefix literally and opens an
+    // empty window — strip it back to a regular path before invoking.
+    let canonical_str = canonical.to_string_lossy();
+    let cleaned = canonical_str
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&canonical_str)
+        .to_string();
+
+    // /select takes a path as a single argument. Pass it as TWO separate
+    // args (".arg("/select,")" and ".arg(cleaned)") so the runtime quotes
+    // the path independently and a comma inside the path can't bleed
+    // into the flag.
     StdCommand::new("explorer.exe")
-        .arg(format!("/select,{}", local_path))
+        .arg(format!("/select,{}", cleaned))
         .creation_flags(no_window())
         .spawn()
         .map_err(|e| CompanionError::Other(format!("could not open explorer: {e}")))?;

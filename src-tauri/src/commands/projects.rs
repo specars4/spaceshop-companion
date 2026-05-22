@@ -156,8 +156,18 @@ fn open_folder_in_explorer(path: &str) -> Result<(), CompanionError> {
     use std::os::windows::process::CommandExt;
     use std::process::Command as StdCommand;
 
+    // Same validation as p4_reveal_in_explorer: reject leading slash,
+    // require absolute path, canonicalize so ".." segments can't be
+    // smuggled. See perforce::validate_explorer_path for rationale.
+    let canonical = super::perforce::validate_explorer_path(path)?;
+    let canonical_str = canonical.to_string_lossy();
+    let cleaned = canonical_str
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&canonical_str)
+        .to_string();
+
     StdCommand::new("explorer.exe")
-        .arg(path)
+        .arg(&cleaned)
         .creation_flags(0x08000000)
         .spawn()
         .map_err(|e| CompanionError::Other(format!("could not open explorer: {e}")))?;

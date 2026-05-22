@@ -61,6 +61,21 @@ The MSI is what to send to contractors. The NSIS .exe is a smaller
 alternative if .msi distribution becomes a problem (some corporate IT
 policies block MSI-not-from-allowlist).
 
+## Smoke testing
+
+Every release should be smoke-tested in a clean Windows Sandbox before
+publishing. The harness lives in `smoke/`:
+
+1. Copy the freshly built MSI into `smoke/`.
+2. Double-click `smoke/smoke.wsb`.
+3. Read `smoke/transcript.txt` — look for `SMOKE_TEST: PASS`.
+
+This catches the class of bugs where the MSI builds on the dev machine
+but fails on a clean install (missing dependencies, hardcoded dev-profile
+paths, WiX config typos). See `smoke/README.md` for full details, host
+setup, and limitations (reboot-required installs and deep-link
+registration must be tested in a real VM).
+
 ## Updating the bundled p4.exe
 
 Source of truth: `<SPACESHOP_TOOLS_ROOT>/tools/perforce/bin/p4.exe`

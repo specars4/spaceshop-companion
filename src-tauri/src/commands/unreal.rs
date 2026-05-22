@@ -44,23 +44,41 @@ pub struct OpenInUnrealResult {
 
 /// Find a `.uproject` inside `workspace_root`. Checks the root first, then
 /// one level deep into subfolders that aren't engine cache dirs.
+///
+/// Symlinks are skipped entirely. A symlink in the workspace pointing back
+/// at the workspace root would otherwise be followed by `.is_dir()` and
+/// the recursive descent would loop forever (until stack overflow). Real
+/// Unreal projects never have circular symlinks — they're solely a
+/// shape that adversarial workspaces could take.
 pub fn find_uproject(workspace_root: &Path) -> Option<PathBuf> {
     let entries = std::fs::read_dir(workspace_root).ok()?;
     let mut subdirs: Vec<PathBuf> = Vec::new();
     for entry in entries.flatten() {
+        // Skip symlinks (file or directory) before any further inspection.
+        // file_type() does NOT follow symlinks; is_dir()/is_file() on the
+        // resulting type are the in-place attributes of the entry itself.
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if ft.is_symlink() {
+            continue;
+        }
         let p = entry.path();
-        if p.is_file()
+        if ft.is_file()
             && p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("uproject"))
                 .unwrap_or(false)
         {
             return Some(p);
         }
-        if p.is_dir() {
+        if ft.is_dir() {
             let name = p
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
+            // Case-insensitive match — Windows filesystems are case-insensitive
+            // by default and `Saved` / `SAVED` / `saved` should all be treated
+            // identically.
             if !SKIP_DIRS.iter().any(|s| s.eq_ignore_ascii_case(&name)) {
                 subdirs.push(p);
             }
@@ -69,8 +87,14 @@ pub fn find_uproject(workspace_root: &Path) -> Option<PathBuf> {
     for dir in subdirs {
         if let Ok(inner) = std::fs::read_dir(&dir) {
             for entry in inner.flatten() {
+                let Ok(ft) = entry.file_type() else {
+                    continue;
+                };
+                if ft.is_symlink() {
+                    continue;
+                }
                 let p = entry.path();
-                if p.is_file()
+                if ft.is_file()
                     && p.extension()
                         .and_then(|e| e.to_str())
                         .map(|e| e.eq_ignore_ascii_case("uproject"))

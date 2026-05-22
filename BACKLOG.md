@@ -31,6 +31,25 @@ top.
   because Companion has no remote IPC, but a defensive check (must be
   absolute, must be under a user-writable root) would harden the surface
   if a malicious deep-link ever crafted a relocation URL.
+- **Better error classification for failed update checks** —
+  `errors.rs::UPDATE_ENDPOINT_PHRASES` lumps signature-verification
+  failures together with network failures, surfacing both as
+  "Companion couldn't reach the update server." Misleading when the
+  truth is "fetched it fine but the signature didn't verify against my
+  embedded pubkey" (e.g., after a key rotation). Split into two
+  distinct friendly messages: one for network, one for signature.
+- **Live progress on the Pull Latest button** — the Rust backend
+  emits `pull-progress` events with the current filename per
+  ([perforce.rs::sync_workspace](src-tauri/src/commands/perforce.rs)),
+  but the project page just shows "Pulling…" with no detail. Wire the
+  events into the project page the same way the Connecting screen
+  shows file count + last filename during onboarding. Becomes
+  important when contractors pull large updates on real projects.
+- **`SYNC_TIMEOUT` may bite real projects** — currently hardcoded to
+  1 hour in `perforce.rs`. A truly large initial sync (hundreds of GB
+  on a typical home connection) will time out and the contractor is
+  stuck on the error screen with no recovery path. Bump the timeout
+  to 4–8 hours AND add a "resume sync" UI for when it does time out.
 
 ## Probably v0.7+
 

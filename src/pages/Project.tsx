@@ -248,12 +248,14 @@ export function ProjectView({
         </div>
         <div className="right">
           <button
-            className="btn btn-small btn-ghost"
-            title="Re-check connection and counts"
+            className="btn btn-ghost"
+            title="Re-check connection and look for new local changes"
             onClick={refreshCounts}
             disabled={refreshState === "loading"}
+            style={{ fontSize: 13, padding: "10px 18px", display: "inline-flex", gap: 8, alignItems: "center" }}
           >
-            {refreshState === "loading" ? "…" : "↻"}
+            <span style={{ fontSize: 16 }}>↻</span>
+            {refreshState === "loading" ? "Refreshing…" : "Refresh"}
           </button>
         </div>
       </div>

@@ -30,7 +30,33 @@ use super::invite::WorkspaceTemplate;
 use super::paths;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
-const SYNC_TIMEOUT: Duration = Duration::from_secs(60 * 60); // 1h for big initial sync
+
+/// Wall-clock cap for non-streaming long ops like `p4 submit`. Submit
+/// uploads file bytes silently with no per-file stdout, so we can't
+/// use a streaming idle signal here — a wall-clock cap is the only
+/// option. Set generously so realistic submit sizes don't hit it.
+const SUBMIT_TIMEOUT: Duration = Duration::from_secs(4 * 60 * 60);
+
+/// Maximum wait after EOF for the p4 process to actually exit. Should
+/// be near-instant — this is just a safety net so we don't hang forever
+/// on a zombie child after stdout closes.
+const SYNC_POST_EOF_TIMEOUT: Duration = Duration::from_secs(30);
+
+// NOTE on `p4 sync` timeouts:
+//
+// We deliberately do NOT impose any timeout on the streaming sync
+// (`run_streaming_sync`). p4 emits ONE stdout line per file, AFTER
+// the file finishes downloading. A single large Unreal asset (10s
+// of GB) can take 30+ minutes on a slow connection, during which p4
+// prints nothing — a naive idle timeout would kill that sync even
+// though it's working correctly, and retrying would start the same
+// big file over from zero, never progressing.
+//
+// Real stall detection would require monitoring process I/O counters
+// (bytes-per-second on disk/network) rather than stdout lines.
+// That's planned for a future version with a proper Cancel button;
+// see BACKLOG. For now, sync runs to completion or until the user
+// quits Companion.
 
 fn no_window() -> u32 {
     0x08000000
@@ -426,146 +452,33 @@ where
     force_resync(config, workspace, workspace_root, on_progress).await
 }
 
-#[allow(dead_code)]
-async fn initial_sync_legacy_force<F>(
-    config: &P4Config,
-    workspace: &str,
-    workspace_root: &Path,
-    mut on_progress: F,
-) -> Result<u32, CompanionError>
-where
-    F: FnMut(&str),
-{
-    use tokio::io::{AsyncBufReadExt, BufReader};
-
-    let mut cmd = Command::new(&config.p4_exe);
-    cmd.args([
-        "-p",
-        &config.server,
-        "-u",
-        &config.user,
-        "-P",
-        &config.ticket,
-        "-c",
-        workspace,
-        "sync",
-        "-f",
-        "//...",
-    ])
-    .env("P4CHARSET", "utf8")
-    .current_dir(workspace_root)
-    .creation_flags(no_window())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
-
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| CompanionError::Perforce(format!("could not spawn p4 sync: {e}")))?;
-
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| CompanionError::Perforce("missing stdout pipe".into()))?;
-    let stderr_handle = child.stderr.take();
-
-    let mut reader = BufReader::new(stdout).lines();
-    let mut files = 0u32;
-    while let Some(line) = reader
-        .next_line()
-        .await
-        .map_err(|e| CompanionError::Perforce(format!("read failed: {e}")))?
-    {
-        if !line.trim().is_empty() {
-            files += 1;
-            on_progress(&line);
-        }
-    }
-
-    let status = timeout(SYNC_TIMEOUT, child.wait())
-        .await
-        .map_err(|_| CompanionError::Perforce("initial sync timed out".into()))?
-        .map_err(|e| CompanionError::Perforce(format!("sync wait failed: {e}")))?;
-
-    if !status.success() {
-        let stderr_text = if let Some(s) = stderr_handle {
-            let mut buf = Vec::new();
-            use tokio::io::AsyncReadExt;
-            let mut s = s;
-            s.read_to_end(&mut buf).await.ok();
-            String::from_utf8_lossy(&buf).to_string()
-        } else {
-            String::new()
-        };
-
-        // "File(s) up-to-date." comes back on stderr in some versions with exit 0,
-        // but if we got here with non-zero we treat it as a real failure.
-        let lc = stderr_text.to_lowercase();
-        if lc.contains("file(s) up-to-date") {
-            return Ok(0);
-        }
-        return Err(CompanionError::Perforce(stderr_text.trim().into()));
-    }
-
-    Ok(files)
-}
-
 /// `p4 sync //...` — daily Pull Latest. Unlike `initial_sync` this does
 /// NOT pass `-f`, so files with pending local edits are left alone
 /// (Perforce will yell about them via stderr) and unchanged files are
 /// not re-downloaded. Use this for the "I want the server's latest
 /// changes" path; use `initial_sync` for onboarding/relocate where
 /// repopulating an empty folder is the goal.
+///
+/// Uses per-line idle timeout — sync can run indefinitely as long as
+/// new file lines keep arriving, but fails fast if the stream stalls.
 pub async fn sync_workspace<F>(
     config: &P4Config,
     workspace: &str,
     workspace_root: &Path,
-    mut on_progress: F,
+    on_progress: F,
 ) -> Result<u32, CompanionError>
 where
     F: FnMut(&str),
 {
-    use tokio::io::{AsyncBufReadExt, BufReader};
-
-    let mut cmd = Command::new(&config.p4_exe);
-    cmd.args([
-        "-p", &config.server, "-u", &config.user, "-P", &config.ticket,
-        "-c", workspace, "sync", "//...",
-    ])
-    .env("P4CHARSET", "utf8")
-    .current_dir(workspace_root)
-    .creation_flags(no_window())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
-
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| CompanionError::Perforce(format!("could not spawn p4 sync: {e}")))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| CompanionError::Perforce("missing stdout pipe".into()))?;
-    let mut reader = BufReader::new(stdout).lines();
-    let mut files = 0u32;
-    while let Some(line) = reader
-        .next_line()
-        .await
-        .map_err(|e| CompanionError::Perforce(format!("read failed: {e}")))?
-    {
-        if !line.trim().is_empty() {
-            files += 1;
-            on_progress(&line);
-        }
-    }
-    let status = timeout(SYNC_TIMEOUT, child.wait())
-        .await
-        .map_err(|_| CompanionError::Perforce("pull timed out".into()))?
-        .map_err(|e| CompanionError::Perforce(format!("sync wait failed: {e}")))?;
-    if !status.success() {
-        // p4 returns exit 1 with "File(s) up-to-date." on stderr when nothing changed.
-        // That's not an error.
-        return Ok(files);
-    }
-    Ok(files)
+    run_streaming_sync(
+        config,
+        workspace,
+        workspace_root,
+        &["sync", "//..."],
+        on_progress,
+        "pull",
+    )
+    .await
 }
 
 // ============================================================================
@@ -971,7 +884,7 @@ pub async fn submit_changes(
         &["-c", workspace, "submit", "-d", description],
         None,
         Some(workspace_root),
-        SYNC_TIMEOUT,
+        SUBMIT_TIMEOUT,
     )
     .await?;
     if code != 0 {
@@ -1092,7 +1005,35 @@ async fn force_resync_inner<F>(
     config: &P4Config,
     workspace: &str,
     workspace_root: &Path,
+    on_progress: F,
+) -> Result<u32, CompanionError>
+where
+    F: FnMut(&str),
+{
+    run_streaming_sync(
+        config,
+        workspace,
+        workspace_root,
+        &["sync", "//..."],
+        on_progress,
+        "force resync",
+    )
+    .await
+}
+
+/// Shared implementation for streaming `p4 sync` variants. Spawns the
+/// child, streams stdout line-by-line emitting each one as progress,
+/// and uses an idle timeout (no progress in SYNC_IDLE_TIMEOUT) instead
+/// of a wall-clock cap on total duration. Real Unreal projects can
+/// legitimately take many hours to pull on slow connections — that is
+/// not an error, as long as files are still flowing.
+async fn run_streaming_sync<F>(
+    config: &P4Config,
+    workspace: &str,
+    workspace_root: &Path,
+    p4_args: &[&str],
     mut on_progress: F,
+    label: &str,
 ) -> Result<u32, CompanionError>
 where
     F: FnMut(&str),
@@ -1100,41 +1041,56 @@ where
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     let mut cmd = Command::new(&config.p4_exe);
-    cmd.args([
+    let base = [
         "-p", &config.server, "-u", &config.user, "-P", &config.ticket,
-        "-c", workspace, "sync", "//...",
-    ])
-    .env("P4CHARSET", "utf8")
-    .current_dir(workspace_root)
-    .creation_flags(no_window())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
+        "-c", workspace,
+    ];
+    let combined: Vec<&str> = base.iter().copied().chain(p4_args.iter().copied()).collect();
+    cmd.args(&combined)
+        .env("P4CHARSET", "utf8")
+        .current_dir(workspace_root)
+        .creation_flags(no_window())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| CompanionError::Perforce(format!("could not spawn p4 sync -f: {e}")))?;
+    let mut child = cmd.spawn().map_err(|e| {
+        CompanionError::Perforce(format!("could not spawn p4 {label}: {e}"))
+    })?;
     let stdout = child
         .stdout
         .take()
         .ok_or_else(|| CompanionError::Perforce("missing stdout pipe".into()))?;
     let mut reader = BufReader::new(stdout).lines();
     let mut count = 0u32;
-    while let Some(line) = reader
-        .next_line()
-        .await
-        .map_err(|e| CompanionError::Perforce(format!("read failed: {e}")))?
-    {
+
+    // Stream stdout lines until EOF. No timeout here — see the module
+    // comment above SYNC_POST_EOF_TIMEOUT for why. A single large file
+    // can legitimately leave stdout silent for tens of minutes while
+    // bytes are flowing on the wire; killing on idle would corrupt
+    // those long downloads.
+    while let Some(line) = reader.next_line().await.map_err(|e| {
+        CompanionError::Perforce(format!("read failed: {e}"))
+    })? {
         if !line.trim().is_empty() {
             count += 1;
             on_progress(&line);
         }
     }
-    let status = timeout(SYNC_TIMEOUT, child.wait())
+
+    // Stdout closed; the child should exit within milliseconds. Use a
+    // small safety timeout in case the process is hung post-EOF.
+    let status = timeout(SYNC_POST_EOF_TIMEOUT, child.wait())
         .await
-        .map_err(|_| CompanionError::Perforce("force resync timed out".into()))?
-        .map_err(|e| CompanionError::Perforce(format!("force resync wait failed: {e}")))?;
+        .map_err(|_| {
+            CompanionError::Perforce(format!(
+                "{label} finished streaming but the p4 process didn't exit"
+            ))
+        })?
+        .map_err(|e| CompanionError::Perforce(format!("{label} wait failed: {e}")))?;
+
     if !status.success() {
-        // exit 1 with no output usually means "already up to date" on force sync
+        // p4 sync exit 1 with "File(s) up-to-date." on stderr just means
+        // nothing changed — not a real failure for our purposes.
         return Ok(count);
     }
     Ok(count)

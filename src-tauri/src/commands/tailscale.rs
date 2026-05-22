@@ -224,6 +224,13 @@ pub async fn install_via_msi<R: tauri::Runtime>(
         )));
     }
 
+    // If the user's profile happens to contain a space (rare but real),
+    // even the temp path can have spaces and re-trigger the same 1619.
+    // Convert to the 8.3 short-name form via Win32 GetShortPathName — those
+    // are guaranteed space-free. Falls back to the long path if the
+    // conversion fails for any reason.
+    let msi_path_for_msiexec = to_short_path_if_possible(&dst_msi);
+
     // /qn → fully silent. TS_UNATTENDEDMODE prevents Tailscale from popping
     // its own first-run UI. We do NOT pass an --auth-key here — that goes
     // to `tailscale up` in the next step so failures surface separately.
@@ -238,7 +245,7 @@ pub async fn install_via_msi<R: tauri::Runtime>(
     // the process has actually exited and the exit code is readable.
     let ps_command = format!(
         "$p = Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i','\"{}\"','/qn','/norestart','TS_UNATTENDEDMODE=always' -Verb RunAs -PassThru; $p.WaitForExit(); $p.ExitCode",
-        dst_msi.display()
+        msi_path_for_msiexec.display()
     );
 
     let mut cmd = Command::new("powershell.exe");
@@ -292,6 +299,35 @@ pub async fn install_via_msi<R: tauri::Runtime>(
             dst_msi.display(),
         ))),
     }
+}
+
+/// Convert a path to its Windows 8.3 short-name form if possible. The
+/// short-name version is guaranteed to contain no spaces, which dodges
+/// the family of msiexec/Start-Process argument-quoting bugs that
+/// produce exit 1619 (ERROR_INSTALL_PACKAGE_OPEN_FAILED) when paths
+/// contain spaces. Requires the file to actually exist at the input
+/// path. Falls back to returning the input path unchanged if the
+/// Win32 call fails for any reason (e.g., the file system has 8.3
+/// generation disabled, which is uncommon).
+fn to_short_path_if_possible(path: &std::path::Path) -> std::path::PathBuf {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::GetShortPathNameW;
+
+    let wide: Vec<u16> = path
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut buf = [0u16; 1024];
+    // SAFETY: wide is null-terminated, buf is correctly sized, and the
+    // Win32 API is documented to return either 0 (failure) or the
+    // number of chars excluding the null terminator.
+    let ret = unsafe { GetShortPathNameW(PCWSTR(wide.as_ptr()), Some(&mut buf)) };
+    if ret > 0 && (ret as usize) < buf.len() {
+        let s = String::from_utf16_lossy(&buf[..ret as usize]);
+        return std::path::PathBuf::from(s);
+    }
+    path.to_path_buf()
 }
 
 // ----- Tauri commands -----

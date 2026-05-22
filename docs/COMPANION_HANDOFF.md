@@ -38,10 +38,9 @@ can update itself without a re-install:
 
 ## What was built
 
-A standalone Tauri 2.x desktop app at `C:\LOCAL_PROJECTS\spaceshop-companion\`
-that takes a contractor from "I have an invite code" to "Unreal's Source
-Control panel shows green" with no jargon and no follow-up messages from
-Arsen.
+A standalone Tauri 2.x desktop app (this repo) that takes a contractor
+from "I have an invite code" to "Unreal's Source Control panel shows
+green" with no jargon and no follow-up messages from Arsen.
 
 **Stack:** Tauri 2.11 / Rust 1.95 (backend) + React 19 / TypeScript 5.8
 (frontend) / Vite 7 (bundler). Single .msi (or NSIS .exe) installer.
@@ -268,7 +267,7 @@ See `BUILDING.md`.
 2. Open the MSI. SmartScreen warns → "More info" → "Run anyway".
 3. After install, Companion opens automatically.
 4. Paste the smoke invite from
-   `C:\LOCAL_PROJECTS\Spaceshop_Perforce\SPACESHOP TOOLS\.scratch\perforce_session\test_invite_for_session_2.txt`
+   `<SPACESHOP_TOOLS_ROOT>/.scratch/perforce_session/test_invite_for_session_2.txt`
    into the textbox. Click **Continue**.
 5. Confirm the project (`Session 2 smoke — smoke-v4`) and accept the
    default folder (or pick another). Click **Connect**.

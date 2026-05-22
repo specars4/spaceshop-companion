@@ -28,7 +28,7 @@ One-time setup on a Windows 10/11 build machine:
 ## First-time setup of this repo
 
 ```powershell
-cd C:\LOCAL_PROJECTS\spaceshop-companion
+cd <COMPANION_REPO_ROOT>     # wherever you cloned this repo
 npm install
 ```
 
@@ -63,12 +63,12 @@ policies block MSI-not-from-allowlist).
 
 ## Updating the bundled p4.exe
 
-Source of truth: `C:\LOCAL_PROJECTS\Spaceshop_Perforce\SPACESHOP TOOLS\tools\perforce\bin\p4.exe`
+Source of truth: `<SPACESHOP_TOOLS_ROOT>/tools/perforce/bin/p4.exe`
 (provenance + SHA-256 in that folder's `README.md`).
 
 ```powershell
-Copy-Item "C:\LOCAL_PROJECTS\Spaceshop_Perforce\SPACESHOP TOOLS\tools\perforce\bin\p4.exe" `
-  "C:\LOCAL_PROJECTS\spaceshop-companion\src-tauri\binaries\p4.exe" -Force
+Copy-Item "<SPACESHOP_TOOLS_ROOT>\tools\perforce\bin\p4.exe" `
+  "<COMPANION_REPO_ROOT>\src-tauri\binaries\p4.exe" -Force
 ```
 
 Then rebuild.
@@ -80,7 +80,7 @@ When Tailscale releases a new version:
 ```powershell
 $version = "1.99.0"  # check https://pkgs.tailscale.com/stable/
 $url = "https://pkgs.tailscale.com/stable/tailscale-setup-$version-amd64.msi"
-Invoke-WebRequest $url -OutFile "C:\LOCAL_PROJECTS\spaceshop-companion\src-tauri\binaries\tailscale.msi"
+Invoke-WebRequest $url -OutFile "<COMPANION_REPO_ROOT>\src-tauri\binaries\tailscale.msi"
 ```
 
 Then bump the Companion `version` in `src-tauri/Cargo.toml` and

@@ -1,10 +1,9 @@
 # Spaceshop Companion — Session log
 
-Chronological record of build sessions on the Companion app. Companion lives
-in its own repo (`C:\LOCAL_PROJECTS\spaceshop-companion\`) and has its own
-session/backlog cadence — separate from the larger SPACESHOP TOOLS project
-because it ships independently to contractors as a `.msi` and has its own
-release cycle.
+Chronological record of build sessions on the Companion app. Companion
+lives in its own repo (this one) and has its own session/backlog cadence
+— separate from the larger SPACESHOP TOOLS project because it ships
+independently to contractors as a `.msi` and has its own release cycle.
 
 Cross-link to the SPACESHOP TOOLS world only happens at the **invite-format
 contract** (`docs/INVITE_FORMAT.md` in both repos; canonical source is
@@ -32,10 +31,10 @@ stalled — needs fresh session to finish.
   Companion" button + SmartScreen guidance + JS that auto-fetches the
   latest release. Needs ~60s after push to go live; verify when next
   session starts.
-- **Signing key** moved to `tools/_secrets.py` in SPACESHOP TOOLS as
-  `COMPANION_UPDATER_PRIVATE_KEY`. Local `.keys/` deleted from the
-  Companion repo.
-- **One-command publish helper**: `SPACESHOP TOOLS/tools/perforce/build_companion.ps1`
+- **Signing key** moved into the operator's local SPACESHOP TOOLS
+  workspace under `tools/_secrets.py` as `COMPANION_UPDATER_PRIVATE_KEY`.
+  Local `.keys/` deleted from the Companion repo.
+- **One-command publish helper**: `<SPACESHOP_TOOLS_ROOT>/tools/perforce/build_companion.ps1`
   — reads the key, runs `tauri build`, optionally cuts the GitHub Release.
   Had a bug (empty-string PowerShell args + Python -c indent + em-dash
   chars in source) — all fixed. Should work in a fresh shell.
@@ -91,13 +90,13 @@ lifetime (Perforce reuses, doesn't refresh). For full reset run
 2. **Publish v0.5.4** — in a real PowerShell terminal (not through Claude
    tools), run:
    ```powershell
-   cd "C:\LOCAL_PROJECTS\Spaceshop_Perforce\SPACESHOP TOOLS"
+   cd <SPACESHOP_TOOLS_ROOT>
    powershell -ExecutionPolicy Bypass -File .\tools\perforce\build_companion.ps1 `
      -Notes "Parser handles pending-changelist files; submit auto-heals stream binding; pull latest always clickable." `
      -Publish
    ```
-   If rustc crashes, `cd C:\LOCAL_PROJECTS\spaceshop-companion\src-tauri; cargo clean` (full clean,
-   not just incremental), then re-run.
+   If rustc crashes, `cd <COMPANION_REPO_ROOT>\src-tauri; cargo clean`
+   (full clean, not just incremental), then re-run.
 3. **Smoke-test end-to-end** — install v0.5.4 .msi on Arsen's machine,
    paste the smoke invite, walk through:
    - Onboarding succeeds

@@ -9,11 +9,9 @@
     "core:webview:default",
     "core:event:default",
     "core:app:default",
-    "opener:default",
     "dialog:default",
     "store:default",
     "process:default",
-    "shell:default",
     "deep-link:default",
     "updater:default"
   ]

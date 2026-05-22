@@ -5,46 +5,68 @@ lead so they can fix it.
 
 ## Installing
 
-1. Double-click the `Spaceshop Companion ...msi` your project lead sent.
-2. Windows may show a blue **"Windows protected your PC"** screen.
-   This is expected. Click **More info** → **Run anyway**.
-3. Companion installs to your user folder (no admin needed for the
+1. Open the download link your project lead sent you and click
+   **Download Companion**.
+2. Run the downloaded `Spaceshop Companion ...msi` file.
+3. Windows may show a blue **"Windows protected your PC"** screen. This
+   is expected — Companion isn't code-signed yet. Click **More info** →
+   **Run anyway**.
+4. Companion installs to your user folder (no admin needed for the
    install itself). It opens automatically when done.
 
 ## First-time setup
 
 1. Companion opens with a text box asking for your invite code.
-2. Paste the invite (or click the link your project lead sent, which
-   pre-fills it).
+2. Paste the invite (or click the `spaceshop-companion://...` link your
+   project lead sent, which pre-fills it).
 3. Click **Continue**.
 4. Review the project name. Pick a folder where the project files should
    live — the default is fine in most cases. Click **Choose folder…**
    to override.
 5. Click **Connect**.
 6. **Windows will ask permission once.** Click **Yes**. This lets
-   Companion set up the connection service.
+   Companion set up the connection service (Tailscale).
 7. Wait 2–5 minutes. You'll see progress steps fill in: parsing,
    preparing connection, joining the network, reaching the server,
    saving your access pass, setting up your workspace, downloading
    your project.
 
-When done, you'll see a big "**You're connected**" screen with three
-values to copy into Unreal.
+When done, you'll see the project page with a big gold **Open in
+Unreal** button.
 
-## Pointing Unreal at the project
+## Opening the project in Unreal
 
-Open the project's `.uproject` file in Unreal Engine.
+Click the gold **Open in Unreal** button on Companion's project page.
 
-1. **Editor Preferences → Source Control**.
-2. Set **Provider** to **Perforce**.
-3. In Companion, click the **Copy** button next to **Server** and paste
-   it into Unreal's Server field.
-4. Same for **User name** and **Workspace**.
-5. Click **Accept Settings** in Unreal. The indicator should turn green.
+That's it. Companion finds the `.uproject` in your project folder,
+writes the Perforce settings into Unreal's config for you, then launches
+Unreal Engine. When Unreal opens, the Source Control indicator should
+already be green — no manual setup in Editor Preferences needed.
 
-You're done. Use Unreal's normal source-control menu to check out, edit,
-and check in assets. Companion can stay running in the tray (bottom-right
-corner of the screen) — it doesn't need to do anything else.
+If the button shows an error like "No .uproject found", run **Pull
+latest** first to download the project content, then try again.
+
+Use Unreal's normal source-control menu to check out, edit, and check in
+assets. Companion can stay running in the tray (bottom-right corner of
+the screen) — it's there if you need to pull updates or submit between
+Unreal sessions.
+
+## Daily use
+
+- **Pull latest**: click **Re-check & pull** on the project page to get
+  new work from the server. Shows a green banner if you're already up to
+  date.
+- **Submit your work**: click **Review & submit changes** to see a list
+  of files you've changed, type a short description, and send them to
+  the server.
+- **Open project folder**: shortcut to the local folder in Explorer.
+
+## Updates
+
+Companion checks for new versions on launch and shows a banner at the
+top if one's available. Click **Install** — Companion downloads the
+update, installs it, and restarts itself. No re-onboarding needed; your
+projects come back exactly as they were.
 
 ## Things to know
 
@@ -53,7 +75,7 @@ corner of the screen) — it doesn't need to do anything else.
   means the pass file got moved or deleted; ask your project lead for a
   fresh invite.
 - **Closing the X just hides Companion.** It keeps running in the system
-  tray (look for the bullet icon next to the clock). To fully quit,
+  tray (look for the dark plug icon next to the clock). To fully quit,
   right-click the tray icon → **Quit**.
 - **Adding another project** later: right-click the tray icon → **Add
   Project…**, then paste the next invite.
@@ -77,10 +99,15 @@ your project lead.
 Your invite is past its expiration date or your project lead revoked
 your access. Ask for a fresh invite.
 
-**Unreal says "Connection failed" after pasting the settings.**
-Make sure all three lines (Server, User name, Workspace) match exactly
-what Companion shows — Unreal trims spaces but the values are
-case-sensitive. Click **Copy** in Companion rather than typing manually.
+**"No .uproject found in <folder>."**
+Click **Re-check & pull** first to download the project content from
+the server, then try **Open in Unreal** again.
+
+**Unreal opens but Source Control isn't green.**
+Click the Source Control icon in Unreal's bottom-right corner → Change
+Source Control Settings. The Provider should already be Perforce and
+the Server/User/Workspace already filled in. Click **Accept Settings**
+to retry the connection.
 
 ## Privacy + security
 
@@ -90,5 +117,5 @@ case-sensitive. Click **Copy** in Companion rather than typing manually.
   standard Windows location). Anyone with access to your user account on
   this computer can read it; treat the machine the same way you treat
   your password manager.
-- Companion does not phone home. No telemetry, no analytics, no update
-  check. New versions ship as a new .msi from your project lead.
+- Companion only contacts the project server (for source control) and
+  GitHub Releases (to check for updates). No telemetry, no analytics.

@@ -11,9 +11,6 @@ top.
   page's "X changes on server / N local not sent" hints live, run
   `p4 changes -m1` + `p4 reconcile -n` periodically per project (every
   ~3 min when window is open, paused when minimized). Token cost is tiny.
-- **"Open in Unreal" launcher** — discover the `.uproject` in the
-  workspace and shell-launch it. Right now the button is in the daily
-  view but stubbed.
 - **Tray icon color polling** — every 30 s, set the tray icon's color to
   green / yellow / red based on Tailscale + Perforce reachability. Status
   pill currently only updates when the project page is open.
@@ -23,6 +20,17 @@ top.
 - **File History view** — the ︙ menu in Changes view has "Show history…"
   grayed out. Implement: list of revisions per file, "Get this version"
   to roll back. Power-user op; keep the UI tight.
+- **`.p4ignore` phantom-edit fix** — `.p4ignore` shows as "modified" in
+  the Changes view every sync because of CRLF↔LF mismatch on Windows
+  (workspace uses `LineEnd: local`). Server-side typemap entry would fix
+  it: `p4 typemap edit` and add `text+l //....p4ignore`. One-time
+  operator action in Workshop, not a Companion code change. Confusing
+  noise in the contractor UX until it lands.
+- **`relocate_project` path validation** — `p4_relocate_project` takes a
+  raw string and passes it to `PathBuf` with no validation. Low risk
+  because Companion has no remote IPC, but a defensive check (must be
+  absolute, must be under a user-writable root) would harden the surface
+  if a malicious deep-link ever crafted a relocation URL.
 
 ## Probably v0.7+
 

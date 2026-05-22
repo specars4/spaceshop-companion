@@ -38,9 +38,7 @@ pub fn run() {
                 let _ = win.unminimize();
             }
         }))
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_deep_link::init())
@@ -243,7 +241,6 @@ fn build_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()>
 mod plugins {
     pub use tauri_plugin_dialog;
     pub use tauri_plugin_process;
-    pub use tauri_plugin_shell;
     pub use tauri_plugin_store;
 }
 

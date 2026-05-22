@@ -22,12 +22,12 @@ stalled — needs fresh session to finish.
 
 ### What landed
 
-- **GitHub repo live + public**: https://github.com/specars4/spaceshop-companion
-- **v0.5.3 release published with signed MSI**: https://github.com/specars4/spaceshop-companion/releases/tag/v0.5.3
+- **GitHub repo live + public**: https://github.com/specars4/onboard
+- **v0.5.3 release published with signed MSI**: https://github.com/specars4/onboard/releases/tag/v0.5.3
 - **Auto-update endpoint verified** — anonymous fetch returns valid signed
   manifest, MSI URL resolves
 - **GitHub Pages branch pushed** (`gh-pages`) — landing page at
-  `https://specars4.github.io/spaceshop-companion/` with single big "Install
+  `https://specars4.github.io/onboard/` with single big "Install
   Companion" button + SmartScreen guidance + JS that auto-fetches the
   latest release. Needs ~60s after push to go live; verify when next
   session starts.
@@ -85,8 +85,8 @@ lifetime (Perforce reuses, doesn't refresh). For full reset run
 ### What the next session should do (in order)
 
 1. **Verify GitHub Pages is live** — visit
-   `https://specars4.github.io/spaceshop-companion/`. If 404, wait 5
-   minutes; if still 404, check Pages settings via `gh api /repos/specars4/spaceshop-companion/pages`.
+   `https://specars4.github.io/onboard/`. If 404, wait 5
+   minutes; if still 404, check Pages settings via `gh api /repos/specars4/onboard/pages`.
 2. **Publish v0.5.4** — in a real PowerShell terminal (not through Claude
    tools), run:
    ```powershell
@@ -104,7 +104,7 @@ lifetime (Perforce reuses, doesn't refresh). For full reset run
    - Re-check & pull → green banner
    - Auto-update banner doesn't fire (we're on latest)
 4. **Ship to Arsen's contractor** — send them:
-   - URL: `https://specars4.github.io/spaceshop-companion/`
+   - URL: `https://specars4.github.io/onboard/`
    - The invite code generated via Workshop's PERFORCE → INVITES panel
      (or `tools/perforce/regenerate_smoke_invite.py` for smoke testing)
 

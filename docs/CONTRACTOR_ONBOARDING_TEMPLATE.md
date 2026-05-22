@@ -15,7 +15,7 @@ Welcome aboard. Two things to get you set up — should take about 5 minutes.
 
 Open this page and click **Download Companion**:
 
-https://specars4.github.io/spaceshop-companion/
+https://specars4.github.io/onboard/
 
 When you run the installer, Windows may show a blue "Windows protected
 your PC" screen. This is expected — we haven't paid for code-signing
@@ -67,7 +67,7 @@ Spaceshop Studios
 
 ## Operator notes
 
-- The download link (`https://specars4.github.io/spaceshop-companion/`)
+- The download link (`https://specars4.github.io/onboard/`)
   always points at the latest release — never update it per release.
 - Contractors who installed an older Companion will auto-update on
   next launch; they don't need a new download link.

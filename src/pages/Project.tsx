@@ -61,11 +61,12 @@ export function ProjectView({
         setUpdateStatus("You're on the latest version.");
       }
     } catch (err) {
-      const e = err as { body?: string; title?: string };
-      const msg =
-        e?.body ??
-        e?.title ??
-        "Couldn't reach the update server. (Will be set up once the GitHub release endpoint is configured.)";
+      const e = err as { body?: string; title?: string; details?: string };
+      const head = e?.body ?? e?.title ?? "Update check failed.";
+      // Surface the raw error too so it's possible to diagnose what
+      // actually failed (network vs signature vs parse vs ...). Without
+      // this, the friendly translator hides the only useful information.
+      const msg = e?.details ? `${head} (${e.details})` : head;
       setUpdateStatus(msg);
     } finally {
       setCheckingUpdate(false);

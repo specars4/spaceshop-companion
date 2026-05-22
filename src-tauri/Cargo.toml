@@ -1,6 +1,6 @@
 [package]
 name = "spaceshop-companion"
-version = "0.5.4"
+version = "0.5.5"
 description = "Spaceshop Companion — contractor onboarding for Spaceshop projects"
 authors = ["Spaceshop Studios"]
 edition = "2021"
@@ -28,6 +28,14 @@ incremental = true
 [profile.dev.package."*"]
 opt-level = 0
 debug = false
+
+# Workaround for rustc 1.95 + MSVC codegen crashes on our crate at
+# opt-level=3 (seen as STATUS_ACCESS_VIOLATION and STATUS_STACK_BUFFER_OVERRUN
+# on the spaceshop-companion lib during release builds). Dropping to
+# opt-level=1 dodges the buggy LLVM pass. Runtime perf cost is
+# imperceptible for a Tauri GUI app — there's no hot loop in our code.
+[profile.release.package.spaceshop-companion]
+opt-level = 1
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "image-png"] }

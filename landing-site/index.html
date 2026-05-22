@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Install Companion</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="icon" type="image/png" href="icon.png" />
+  <style>
+    :root {
+      --ink: #0f0e0d;
+      --ink-2: #161412;
+      --ink-3: #1f1c19;
+      --cream: #e8dfc9;
+      --cream-dim: #b8b1a0;
+      --warm-gray: #8a8272;
+      --rule: #2a2620;
+      --gold: #d4b47a;
+      --gold-dim: #8e7a4f;
+      --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+      --font-serif: "Iowan Old Style", "Palatino Linotype", "Georgia", serif;
+      --font-mono: "Cascadia Code", "Consolas", monospace;
+      --tracking-caps: 0.18em;
+      --tracking-caps-wide: 0.28em;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; min-height: 100vh; background: var(--ink); color: var(--cream); font-family: var(--font-sans); font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+    .page { min-height: 100vh; display: flex; flex-direction: column; }
+    header { display: flex; align-items: baseline; gap: 14px; padding: 22px 48px 18px 48px; border-bottom: 1px solid var(--rule); }
+    header .bullet { color: var(--gold); font-size: 18px; line-height: 1; }
+    header .wordmark { font-family: var(--font-serif); font-size: 19px; }
+    header .wordmark em { font-style: italic; color: var(--cream-dim); }
+    main { flex: 1 1 auto; max-width: 720px; margin: 0 auto; padding: 64px 40px 40px 40px; width: 100%; }
+    .hero img { width: 96px; height: 96px; display: block; margin: 0 auto 28px auto; }
+    h1 { font-family: var(--font-serif); font-weight: 400; font-size: 36px; letter-spacing: -0.01em; margin: 0 0 12px 0; text-align: center; }
+    h1 em { font-style: italic; color: var(--cream-dim); }
+    .sub { font-family: var(--font-serif); font-style: italic; color: var(--cream-dim); font-size: 17px; margin: 0 0 40px 0; text-align: center; }
+    .cta { display: flex; justify-content: center; margin: 40px 0; }
+    .install-btn {
+      display: inline-flex; align-items: center; gap: 14px;
+      padding: 22px 40px;
+      background: var(--gold); color: var(--ink);
+      border: 1px solid var(--gold); border-radius: 4px;
+      font-family: var(--font-sans); font-size: 14px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.22em;
+      text-decoration: none;
+      cursor: pointer;
+      box-shadow: 0 10px 30px rgba(212, 180, 122, 0.22);
+      transition: background-color 0.15s ease, border-color 0.15s ease;
+    }
+    .install-btn:hover { background: var(--cream); border-color: var(--cream); }
+    .install-btn .glyph { font-size: 18px; }
+    .version { text-align: center; font-size: 11px; color: var(--warm-gray); text-transform: uppercase; letter-spacing: var(--tracking-caps); margin-top: -28px; margin-bottom: 40px; }
+    .section-label { text-transform: uppercase; letter-spacing: var(--tracking-caps); font-size: 11px; color: var(--warm-gray); display: flex; align-items: center; gap: 8px; margin: 40px 0 16px 0; }
+    .section-label::before { content: "●"; color: var(--gold); font-size: 8px; }
+    .card { background: var(--ink-2); border: 1px solid var(--rule); border-radius: 4px; padding: 22px 26px; margin-bottom: 18px; }
+    .card ol { margin: 0; padding-left: 22px; color: var(--cream-dim); line-height: 2; }
+    .card ol li strong { color: var(--cream); font-weight: 600; }
+    .warning { border-color: var(--gold-dim); background: rgba(212, 180, 122, 0.06); }
+    .warning .label { color: var(--gold); font-size: 11px; text-transform: uppercase; letter-spacing: var(--tracking-caps); margin-bottom: 8px; }
+    .warning .body { font-family: var(--font-serif); font-style: italic; color: var(--cream); font-size: 14px; }
+    .warning .body strong { font-style: normal; color: var(--cream); font-weight: 600; }
+    @media (max-width: 600px) {
+      header { padding-left: 22px; padding-right: 22px; }
+      main { padding: 32px 22px; }
+      h1 { font-size: 28px; }
+      .install-btn { padding: 18px 28px; font-size: 12px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <span class="bullet">●</span>
+      <span class="wordmark"><em>Companion</em></span>
+    </header>
+
+    <main>
+      <div class="hero">
+        <img src="icon.png" alt="" />
+        <h1>Install <em>Companion</em></h1>
+        <p class="sub">Then paste the invite code you were sent.</p>
+      </div>
+
+      <div class="cta">
+        <a id="install" class="install-btn" href="https://github.com/specars4/onboard/releases/latest" download>
+          <span class="glyph">⇣</span>
+          <span>Download Companion</span>
+        </a>
+      </div>
+      <div class="version" id="version">Loading latest version…</div>
+
+      <div class="section-label">W H A T &nbsp; H A P P E N S &nbsp; N E X T</div>
+      <div class="card">
+        <ol>
+          <li><strong>Paste your invite code</strong> and click <strong>Continue</strong>.</li>
+          <li><strong>Pick the folder</strong> where the project files should live (the default is fine), then click <strong>Connect</strong>.</li>
+          <li>Click <strong>Yes</strong> when Windows asks for permission.</li>
+          <li>Wait 2–5 minutes while everything connects and downloads.</li>
+          <li>Click <strong>Pull latest</strong> to make sure you have the newest files.</li>
+          <li>Click <strong>Open in Unreal</strong> — and you're working.</li>
+        </ol>
+      </div>
+
+      <div class="section-label">A &nbsp; H E A D S - U P &nbsp; F R O M &nbsp; W I N D O W S</div>
+      <div class="card warning">
+        <div class="label">●  S M A R T S C R E E N</div>
+        <div class="body">
+          Windows may show a blue screen saying <strong>"Windows protected your PC"</strong> when you run the
+          installer. This is normal — the installer isn't code-signed yet.
+          Click <strong>More info</strong>, then <strong>Run anyway</strong>. The installer is safe.
+        </div>
+      </div>
+
+      <div class="section-label">R E Q U I R E M E N T S</div>
+      <div class="card">
+        <ol>
+          <li>Windows 10 or 11 (64-bit)</li>
+          <li>About 60 MB of disk space</li>
+          <li>An invite code</li>
+        </ol>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // Fetch the latest release info and update the Install button + version
+    // text so visitors always download whatever's current.
+    (async function() {
+      try {
+        const res = await fetch("https://api.github.com/repos/specars4/onboard/releases/latest");
+        if (!res.ok) throw new Error("api " + res.status);
+        const release = await res.json();
+        const msi = (release.assets || []).find(a => a.name.toLowerCase().endsWith(".msi"));
+        if (msi) {
+          document.getElementById("install").href = msi.browser_download_url;
+        }
+        const ver = release.tag_name || release.name || "";
+        const sizeM = msi ? (msi.size / 1024 / 1024).toFixed(0) : "39";
+        document.getElementById("version").textContent =
+          ver + "  ·  " + sizeM + " MB";
+      } catch (e) {
+        document.getElementById("version").textContent = "Latest release";
+      }
+    })();
+  </script>
+</body>
+</html>

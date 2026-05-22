@@ -19,18 +19,27 @@ verbatim until it's wrong — then fix the doc.
 The Ed25519 signing keypair was generated during the v0.5.1 build:
 - **Public key** is committed to the repo inside `src-tauri/tauri.conf.json`
   under `plugins.updater.pubkey`. Safe to share.
-- **Private key** lives at `.keys/companion-updater.key` after generation —
-  this directory is `.gitignore`'d. **Move the file immediately into a
-  password manager** (1Password, Bitwarden, Keychain) and delete the local
-  copy. Loss = permanent inability to ship updates.
+- **Private key** lives in the SPACESHOP TOOLS repo at
+  `tools/_secrets.py` under the constant `COMPANION_UPDATER_PRIVATE_KEY`.
+  That file is not a git repo (per Session 51 single-user-local
+  convention) so the key isn't pushed anywhere public. **DO NOT** move
+  the key back into this Companion repo (which IS public on GitHub).
+  Loss = permanent inability to ship updates.
+
+The one-command build helper `tools/perforce/build_companion.ps1` in
+SPACESHOP TOOLS reads the key from there automatically — see the
+"Per-release ceremony" section below.
 
 To regenerate (only if the private key is lost — every existing Companion
 install will then refuse to update and must be reinstalled by hand from a
 new .msi):
 ```powershell
-npx tauri signer generate -w .keys/companion-updater.key --ci -p ""
+npx tauri signer generate -w companion-updater.key --ci -p ""
 ```
-Replace the `pubkey` in `tauri.conf.json` with the new public key.
+Then paste the contents of `companion-updater.key` into
+`tools/_secrets.py` as `COMPANION_UPDATER_PRIVATE_KEY` (replace the
+existing value). Also replace the `pubkey` in `tauri.conf.json` with the
+new public key from `companion-updater.key.pub`.
 
 ### GitHub repo
 First time:
@@ -66,29 +75,45 @@ features: `0.5.x → 0.6.0`.
 Add a "v0.x.y — YYYY-MM-DD" section at the top describing what shipped.
 Future agents and humans read it.
 
-### 3. Build the signed installer
+### 3. Build + publish in one command (recommended)
 
-Set the signing-key env vars and build. Treat the private-key value like a
-password — don't paste it in chat logs.
+The helper at `<SPACESHOP TOOLS>/tools/perforce/build_companion.ps1`
+pulls the signing key from `tools/_secrets.py`, runs `tauri build`, and
+optionally cuts the GitHub Release in a single invocation:
 
 ```powershell
-# Pull the private key out of your password manager and paste it here:
-$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content "$HOME\private\spaceshop-companion-updater.key" -Raw
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""   # empty if you used --no-password during keygen
-
-# Build
-cd C:\LOCAL_PROJECTS\spaceshop-companion
-npm run tauri build
+cd "C:\LOCAL_PROJECTS\Spaceshop_Perforce\SPACESHOP TOOLS"
+powershell -ExecutionPolicy Bypass -File `
+  .\tools\perforce\build_companion.ps1 `
+  -Notes "Plain-language description of what changed" `
+  -Publish
 ```
 
-Build outputs (under `src-tauri/target/release/bundle/`):
+Outputs (under `spaceshop-companion/src-tauri/target/release/bundle/`):
 - `msi/Spaceshop Companion_<version>_x64_en-US.msi` — the installer
-- `msi/Spaceshop Companion_<version>_x64_en-US.msi.sig` — the signature
-  (Tauri produces this when the env vars are set)
+- `msi/Spaceshop Companion_<version>_x64_en-US.msi.sig` — the Ed25519
+  signature (Tauri produces this when the env var is set; the helper
+  script handles that)
+- `msi/latest.json` — the update manifest (after `-Publish`)
 
 Tauri's NSIS output (`nsis/Spaceshop Companion_<version>_x64-setup.exe`) is
 also produced but is a secondary artifact — the MSI is canonical for
 auto-update.
+
+### 3b. Manual fallback (if you don't want to use the helper)
+
+```powershell
+# Pull the private key out of _secrets.py via python:
+$env:TAURI_SIGNING_PRIVATE_KEY = python -c "import sys; sys.path.insert(0, r'C:\LOCAL_PROJECTS\Spaceshop_Perforce\SPACESHOP TOOLS'); from tools._secrets import COMPANION_UPDATER_PRIVATE_KEY; print(COMPANION_UPDATER_PRIVATE_KEY, end='')"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
+
+# Build
+cd C:\LOCAL_PROJECTS\spaceshop-companion
+npm run tauri build
+
+# Clear the env var so it doesn't linger in your shell
+Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY
+```
 
 ### 4. Make the `latest.json` manifest
 

@@ -199,8 +199,17 @@ pub async fn install_via_msi<R: tauri::Runtime>(
     // /qn → fully silent. TS_UNATTENDEDMODE prevents Tailscale from popping
     // its own first-run UI. We do NOT pass an --auth-key here — that goes
     // to `tailscale up` in the next step so failures surface separately.
+    //
+    // We do NOT use `-Wait` on Start-Process here. When combined with
+    // `-Verb RunAs`, `-Wait` races with the elevated child: the cmdlet
+    // can return before the elevated process has fully terminated, and
+    // any subsequent attempt to read `.ExitCode` blows up with
+    //   "Process must exit before requested information is available."
+    // Instead we capture the Process object with `-PassThru` and call
+    // `.WaitForExit()` explicitly, which is guaranteed to block until
+    // the process has actually exited and the exit code is readable.
     let ps_command = format!(
-        "Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i','\"{}\"','/qn','/norestart','TS_UNATTENDEDMODE=always' -Verb RunAs -Wait -PassThru | Select-Object -ExpandProperty ExitCode",
+        "$p = Start-Process -FilePath 'msiexec.exe' -ArgumentList '/i','\"{}\"','/qn','/norestart','TS_UNATTENDEDMODE=always' -Verb RunAs -PassThru; $p.WaitForExit(); $p.ExitCode",
         msi.display()
     );
 

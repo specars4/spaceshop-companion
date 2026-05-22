@@ -15,6 +15,102 @@ Most-recent first.
 
 ---
 
+## Session 2 continuation — 2026-05-21 evening — daily-ops + ship infrastructure
+
+**Outcome:** v0.5.3 shipped to GitHub (public repo, signed, auto-update verified
+end-to-end). v0.5.4 attempted with critical bug fixes but build pipeline
+stalled — needs fresh session to finish.
+
+### What landed
+
+- **GitHub repo live + public**: https://github.com/specars4/spaceshop-companion
+- **v0.5.3 release published with signed MSI**: https://github.com/specars4/spaceshop-companion/releases/tag/v0.5.3
+- **Auto-update endpoint verified** — anonymous fetch returns valid signed
+  manifest, MSI URL resolves
+- **GitHub Pages branch pushed** (`gh-pages`) — landing page at
+  `https://specars4.github.io/spaceshop-companion/` with single big "Install
+  Companion" button + SmartScreen guidance + JS that auto-fetches the
+  latest release. Needs ~60s after push to go live; verify when next
+  session starts.
+- **Signing key** moved to `tools/_secrets.py` in SPACESHOP TOOLS as
+  `COMPANION_UPDATER_PRIVATE_KEY`. Local `.keys/` deleted from the
+  Companion repo.
+- **One-command publish helper**: `SPACESHOP TOOLS/tools/perforce/build_companion.ps1`
+  — reads the key, runs `tauri build`, optionally cuts the GitHub Release.
+  Had a bug (empty-string PowerShell args + Python -c indent + em-dash
+  chars in source) — all fixed. Should work in a fresh shell.
+
+### Bug fixes between v0.5.3 → intended-v0.5.4 (in git, NOT yet in a published .msi)
+
+| Bug | Where | Fix |
+|---|---|---|
+| `p4 status` parser only handled `reconcile to` lines, skipped `submit change N to add` lines | `list_changes` | Now matches both formats |
+| Submit fails on pre-fix workspaces with "cannot submit from non-stream client" | `submit_changes` | Calls `ensure_workspace_stream_bound` before reconcile/submit; auto-heal preserves existing spec, adds Stream binding derived from view |
+| Pull Latest button greyed when no remote changes — felt broken | `Project.tsx` | Always clickable, shows "Re-check & pull" when nothing new |
+| Update-check spammed ERROR every launch + every click while endpoint was placeholder | `updater.rs` | Detect placeholder, skip silently with one info log |
+| Footer "ARSEN ARZUMANYAN..." unwanted | `Shell.tsx` | Removed |
+| Confirm gates required typing project name | `ForceResyncConfirm`, Project Remove inline | Now require typing `YES` |
+| "COPY THESE INTO UNREAL" label too prescriptive | `Project.tsx` | Renamed to "SERVER DETAILS" with softer caption |
+
+### Server-side: contractors group Timeout was 12h → bumped to 90 days
+
+`set_contractor_group_timeout(client, days=90)` added to
+`tools/perforce/admin.py`; ran live against NAS p4d. Smoke invite now has
+90-day ticket. Existing tickets minted before the change keep their old
+lifetime (Perforce reuses, doesn't refresh). For full reset run
+`regenerate_smoke_invite.py` which does logout-then-login.
+
+### What broke in the last hour (root cause: trying to do too much in one Claude session)
+
+1. **rustc STATUS_ACCESS_VIOLATION (0xc0000005)** during incremental release
+   builds — intermittent rustc 1.95 / MSVC bug. Cleared
+   `target/release/incremental` once, helped temporarily.
+2. **Tauri `signer sign` CLI hangs** when invoked outside a fully-interactive
+   shell; prompts for confirmation that never comes. Use `npm run tauri
+   build` with env vars set — that path produces .sig reliably.
+3. **PowerShell strips empty-string args** to native exes, so `-p ""` becomes
+   `-p` with no value. Either use `[Parameter]` flag syntax (`--no-password`)
+   or omit the flag and rely on the env var.
+4. **My background-task timeouts** were swallowing in-flight `npm run tauri
+   build` runs. The next session should run the build in a real
+   foreground PowerShell terminal (not via Claude's tool subprocess) so
+   nothing reaps it.
+
+### Current artifact state
+
+- `src-tauri/target/release/bundle/msi/Spaceshop Companion_0.5.4_x64_en-US.msi`
+  exists (39 MB) but is **unsigned** (.sig missing). Don't ship this.
+- v0.5.3 .msi + .sig are both fine and on the GitHub Release. Safe to
+  send contractors today if necessary.
+
+### What the next session should do (in order)
+
+1. **Verify GitHub Pages is live** — visit
+   `https://specars4.github.io/spaceshop-companion/`. If 404, wait 5
+   minutes; if still 404, check Pages settings via `gh api /repos/specars4/spaceshop-companion/pages`.
+2. **Publish v0.5.4** — in a real PowerShell terminal (not through Claude
+   tools), run:
+   ```powershell
+   cd "C:\LOCAL_PROJECTS\Spaceshop_Perforce\SPACESHOP TOOLS"
+   powershell -ExecutionPolicy Bypass -File .\tools\perforce\build_companion.ps1 `
+     -Notes "Parser handles pending-changelist files; submit auto-heals stream binding; pull latest always clickable." `
+     -Publish
+   ```
+   If rustc crashes, `cd C:\LOCAL_PROJECTS\spaceshop-companion\src-tauri; cargo clean` (full clean,
+   not just incremental), then re-run.
+3. **Smoke-test end-to-end** — install v0.5.4 .msi on Arsen's machine,
+   paste the smoke invite, walk through:
+   - Onboarding succeeds
+   - Make a file → Review & submit → succeeds (stream auto-heal)
+   - Re-check & pull → green banner
+   - Auto-update banner doesn't fire (we're on latest)
+4. **Ship to Arsen's contractor** — send them:
+   - URL: `https://specars4.github.io/spaceshop-companion/`
+   - The invite code generated via Workshop's PERFORCE → INVITES panel
+     (or `tools/perforce/regenerate_smoke_invite.py` for smoke testing)
+
+---
+
 ## Session 2 — 2026-05-20 / 2026-05-21 — v0.5 build + UX iteration + v0.5.2 follow-on
 
 ### Latest pass (2026-05-21, continuation) — v0.5.2 "Open in Unreal"

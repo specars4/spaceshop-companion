@@ -15,60 +15,143 @@ top.
   Companion's same-day), and fires `msiexec /x {companion}` /passive
   before exiting. Falls back to `ms-settings:appsfeatures` if the
   ProductCode isn't in the Uninstall registry. Type-YES gated.
-  See `src-tauri/src/commands/uninstall.rs` and
-  `src/components/UninstallConfirm.tsx`.
+  See `src-tauri/src/commands/uninstall.rs` + `src/components/UninstallConfirm.tsx`.
+- **Repair workspace button** ✓ — `p4 clean //...` (removes orphan files)
+  + `p4 sync -f //...` (re-pulls fresh). Sits between Force re-download
+  and Stop showing in Advanced. RepairConfirm modal explains the orphan-
+  deletion semantics so users understand what gets removed (only files
+  never added to p4 — opened-for-edit and pending changes survive).
+  See `src-tauri/src/commands/perforce.rs::repair_workspace` +
+  `src/components/RepairConfirm.tsx`.
+- **Tray polling — color icon + per-project Sync Now + live tooltip** ✓
+  — 30-second polling loop in `src-tauri/src/commands/tray_poll.rs`
+  computes Tailscale-status + per-project `change_counts` health, tints
+  the existing tray icon green/yellow/red via runtime luminance-weighted
+  RGBA blend, rebuilds the menu dynamically with `sync-<project_id>`
+  items for every onboarded project, and updates the tooltip with
+  project/change-count summary. Tray Sync runs `sync_workspace`
+  in-process and emits `pull-progress` events with `source: "tray"`
+  so the main-window listener filters them out. Pulls/forces/repairs
+  initiated from the main window now mark `TrayPollState.pulling` via
+  a `PullingGuard` RAII so the tray poll doesn't collide with active
+  syncs. Uses `tauri-plugin-notification` for completion toasts.
+- **Background poll for All Projects status hints** ✓ — Welcome.tsx
+  setInterval at 3 min re-runs `change_counts` per project, paused via
+  `document.visibilityState` API. Refs track mounted state and in-flight
+  fetches to prevent setState-after-unmount and duplicate spawns. Tiny
+  `.checking-dot` opacity-pulse animation per tile while a fetch is in
+  flight. Skips projects flagged `folder_missing`.
+- **WiX util:CloseApplication fragment** ✓ — `src-tauri/wix/fragment.wxs`
+  declares util:CloseApplication at Fragment level (NOT inside the
+  Component — the v0.5.x attempt had a schema error) plus a placeholder
+  anchor Component (`CompanionCloseAppAnchor` with HKCU RegistryValue
+  KeyPath) referenced via `componentRefs` to force the fragment into
+  the linked MSI. WiX's atomic fragment-linking pulls both. Now MSI
+  upgrades close a running Companion.exe cleanly before replacing
+  files — no more "files in use" prompts during in-app updater.
+- **Banner primitive** ✓ — new `src/components/Banner.tsx` extracted
+  from the inline-style banners in `UpdateBanner.tsx` and
+  `StartupErrorBanner` (inside Shell.tsx). Severity-driven (info/warn/
+  danger) with label/title/body/details/children slots. Refactor only;
+  no behavior change. v0.7 polish could fold the uninstall-result and
+  tray-sync-result surfaces into this primitive too.
+- **App version display in header** ✓ — `Shell.tsx` fetches
+  `getVersion()` on mount, renders `C O M P A N I O N · v 0 . 6 . 0`
+  in the existing small-caps subtitle so the user can tell at a glance
+  which build they're on. Survives auto-update because `getVersion()`
+  reads the running binary's actual version.
+- **Live pull-progress on Pull/Force/Repair buttons** ✓ — Project.tsx
+  listens for `pull-progress` events filtered to its project_id and
+  scoped to `source: "main"` (ignores `source: "tray"` events from
+  tray-initiated syncs). Shows `{count} files · {truncated current
+  filename}` below the badges while pulling. Mode label flips between
+  "Pulling… / Re-downloading… / Repairing…" via `pullMode` state.
+- **Update-error tech details disclosure** ✓ — when Check for updates
+  fails, the friendly title shows in the status line and the raw
+  `details` from Tauri's updater appears in a collapsed `<details>`
+  panel so we can diagnose network-vs-signature failures without
+  polluting the happy-path UI.
+- **Fatal `startup-error` banner** ✓ — if `ensure_binaries` fails
+  during app setup, lib.rs emits a structured event the frontend
+  renders as a non-dismissable danger banner above the header with a
+  Reinstall CTA. Replaces the previous silent `warn!` that left p4
+  commands later spawn-failing with cryptic errors.
+- **`invite::project_name` length + control-char validation** ✓ —
+  rejects empty / >100 char / contains NUL/CR/LF/control. Prevents
+  pathological menu labels and notification bodies if a malicious
+  invite ever reaches us.
+- **`-vnet.maxwait=300` on all p4 sync invocations** ✓ — protocol-level
+  stall detection. Kills the sync only if the SOCKET is idle for
+  5 minutes (p4 client error), not on slow legitimate downloads of
+  big files. (Shipped in v0.5.9.)
 
-## Up next (v0.6)
+## v0.6 build-infra notes
 
-- **Background poll for status hints** — Companion currently knows what
-  state a project was in *when last opened*. To make the All Projects
-  page's "X changes on server / N local not sent" hints live, run
-  `p4 changes -m1` + `p4 reconcile -n` periodically per project (every
-  ~3 min when window is open, paused when minimized). Token cost is tiny.
-- **Tray icon color polling** — every 30 s, set the tray icon's color to
-  green / yellow / red based on Tailscale + Perforce reachability. Status
-  pill currently only updates when the project page is open.
-- **"Sync Now" tray menu item** — per the Session 1 amendments doc, tray
-  should let you trigger a Pull on any project without opening the main
-  window. Useful for non-Unreal review work.
+- **rustc 1.94 pin via `src-tauri/rust-toolchain.toml`** — eliminates
+  random STATUS_ACCESS_VIOLATION crashes we saw on rustc 1.95.
+- **`[profile.release.package.tauri] opt-level=1 + codegen-units=1`** —
+  workaround for a deterministic rustc crash on the `tauri` crate at
+  default opt-level=3 in v0.6.0. Combined with the same override
+  on `spaceshop-companion`, all release builds compile cleanly.
+- **Windows Sandbox smoke harness in `smoke/`** — `.wsb` config +
+  `run.ps1` driver. Enable on the build host via
+  `Enable-WindowsOptionalFeature -FeatureName "Containers-DisposableClientVM"
+  -All -Online` + reboot. Then every release: copy MSI to `smoke/`,
+  double-click `smoke.wsb`, grep `smoke/transcript.txt` for
+  `SMOKE_TEST: PASS`. Catches install-time bugs before they reach a
+  contractor. NOT YET ENABLED on the current build host — planned for
+  the next reboot window.
+
+## Up next (v0.7)
+
+- **Real I/O byte-counter stall detection + Cancel button** — replace
+  the current "no-timeout streaming sync" with actual bytes-flowing
+  detection via Win32 `PROCESS_IO_COUNTERS`. Add a Cancel button so
+  the user can abort a stuck sync gracefully. Win32 API path via the
+  `windows` crate we already depend on.
+- **`p4 -ztag` parser refactor** — switch streaming p4 output parsing
+  from raw stdout regex to structured marshalled output. Real severity
+  field (info/warn/failed/fatal) means we can distinguish "File(s)
+  up-to-date" from "Client unknown" without our current substring
+  hacks. Touches the whole streaming pipeline.
+- **Welcome poll + tray poll dedup** — both fetch `change_counts` per
+  project independently (Welcome every 3min visible, tray every 30s
+  always). Wave-align occasionally → 2× p4 spawns. Either a shared
+  cache with TTL in `TrayPollState`, or have Welcome consume tray-poll
+  events instead of running its own loop.
+- **Tactical filesystem-watcher byte-progress** — for big single-file
+  Unreal asset downloads, watch the `.p4~` staging file size every 2s
+  and derive bytes/sec to emit into `pull-progress`. ~50 LoC, purely
+  client-side, bypasses the p4 CLI's lack of byte-level progress
+  output. Alternative to the more invasive p4api/p4python linking.
 - **File History view** — the ︙ menu in Changes view has "Show history…"
   grayed out. Implement: list of revisions per file, "Get this version"
   to roll back. Power-user op; keep the UI tight.
+- **Logo in the installer** — the WiX MSI installer currently uses
+  default Microsoft Installer dialogs with no Spaceshop branding.
+  Drop a UI banner/dialog graphic into the WiX bundle so the install
+  experience looks designed.
+- **Larger Refresh button polish + UpdateBanner color hierarchy** —
+  audit Finding #1 from the Wave 1 audit. The banner refactor lost
+  the brighter contrast on `v{new_version}` that the old code had.
+- **Defensive nonce-gate on `clean_uninstall_cmd`** — security
+  agent Finding #1. Not currently exploitable (no XSS surface), but
+  cheap defense-in-depth: generate a per-modal-open random nonce in
+  Rust, require it as a second arg to the Tauri command. ~20 LoC.
 - **`.p4ignore` phantom-edit fix** — `.p4ignore` shows as "modified" in
   the Changes view every sync because of CRLF↔LF mismatch on Windows
   (workspace uses `LineEnd: local`). Server-side typemap entry would fix
   it: `p4 typemap edit` and add `text+l //....p4ignore`. One-time
-  operator action in Workshop, not a Companion code change. Confusing
-  noise in the contractor UX until it lands.
+  operator action in Workshop, not a Companion code change.
 - **`relocate_project` path validation** — `p4_relocate_project` takes a
   raw string and passes it to `PathBuf` with no validation. Low risk
   because Companion has no remote IPC, but a defensive check (must be
   absolute, must be under a user-writable root) would harden the surface
   if a malicious deep-link ever crafted a relocation URL.
-- **Better error classification for failed update checks** —
-  `errors.rs::UPDATE_ENDPOINT_PHRASES` lumps signature-verification
-  failures together with network failures, surfacing both as
-  "Companion couldn't reach the update server." Misleading when the
-  truth is "fetched it fine but the signature didn't verify against my
-  embedded pubkey" (e.g., after a key rotation). Split into two
-  distinct friendly messages: one for network, one for signature.
-- **Byte-level progress for single large files** — current
-  `pull-progress` events fire once per file *after* it finishes
-  downloading. On a 50 GB Unreal `.uasset` the UI sits silent for 30+
-  minutes and looks frozen. We investigated `p4 -I sync -q` in v0.6
-  (see the long NOTE in `perforce.rs`) and confirmed it does NOT
-  solve this — it reports file-count percent only, suppresses our
-  per-file lines, and emits a terminal-style backspaced progress bar
-  rather than parseable records. Real fix requires either linking
-  p4api (C++) for `ClientProgress::Update()` callbacks, shelling out
-  to p4python, or watching the on-disk file size of the in-progress
-  download via an OS file-system watcher and inferring bytes/sec from
-  delta. v0.7+ work.
-- **`SYNC_TIMEOUT` may bite real projects** — currently hardcoded to
-  1 hour in `perforce.rs`. A truly large initial sync (hundreds of GB
-  on a typical home connection) will time out and the contractor is
-  stuck on the error screen with no recovery path. Bump the timeout
-  to 4–8 hours AND add a "resume sync" UI for when it does time out.
+- **Mark main-window pulls in `TrayPollState.pulling`** — Wave 2 audit
+  H2 was partially addressed by `PullingGuard`, but verify under load
+  that the tray poll properly skips a project that's actively syncing
+  from the main window.
 
 ## Probably v0.7+
 

@@ -55,11 +55,75 @@ Unreal sessions.
 
 - **Pull latest**: click **Re-check & pull** on the project page to get
   new work from the server. Shows a green banner if you're already up to
-  date.
+  date. While pulling you'll see a live file count + the current
+  filename below the badges, so you know it's actually working.
 - **Submit your work**: click **Review & submit changes** to see a list
   of files you've changed, type a short description, and send them to
   the server.
 - **Open project folder**: shortcut to the local folder in Explorer.
+
+## The tray icon
+
+The dark plug icon in the system tray (bottom-right corner) changes
+color based on what's working:
+
+- **Gold/green** — Tailscale is up AND your project server is reachable
+- **Yellow** — partially working (one of those isn't responding)
+- **Red** — both broken/offline
+
+Right-click the tray icon for:
+- **Open Companion** — bring the main window forward
+- **Add Project…** — paste another invite
+- **Sync \<Project\>** — pull latest for that project right from the
+  tray (you don't have to open the main window)
+- **Quit** — fully close Companion
+
+Hovering over the icon shows a tooltip with how many projects you have
+and how many changes are pending across them.
+
+## If something looks stuck — Repair workspace
+
+In **Advanced** on the project page there's a **Repair workspace**
+button. Use this when files look out of sync but Pull Latest isn't
+fixing it (e.g. you accidentally deleted some files in Explorer, or a
+sync got interrupted mid-way).
+
+What it does: removes any file in the project folder that isn't tracked
+by the server, then re-pulls anything missing.
+
+What's safe: files you've opened for add or edit in p4 (anything that
+shows up in **Review & submit**) stay put. Pending changes are not
+touched.
+
+What gets removed: anything you dropped into the project folder but
+never added to p4 — notes, screenshots, scratch exports, render
+outputs. If you have stuff like that you want to keep, move it
+somewhere outside the project folder first, or cancel and add it to
+p4 first.
+
+You'll see a confirmation dialog explaining this before anything happens.
+
+## Uninstalling
+
+When you're done with a Spaceshop project for good, you have two ways
+to remove Companion:
+
+- **From the Project page** → Advanced section → **Uninstall Spaceshop
+  Companion** — this is the clean option. Removes all Spaceshop data
+  (projects, your access pass to the server, cached binaries), and
+  optionally Tailscale too:
+  - If Companion installed Tailscale for you originally, the checkbox
+    defaults to ON — Tailscale gets uninstalled along with everything else
+  - If you had Tailscale before Companion (for personal use or other
+    apps), the checkbox defaults to OFF — Tailscale stays, your other
+    uses keep working
+  - You can change the checkbox either way before confirming
+  
+  Type **YES** to confirm, and Companion handles the rest.
+- **From Windows Settings → Apps & Features** — quicker but messier.
+  Removes only Companion itself. Tailscale, your p4 ticket, and
+  Companion's data folder will be left behind. Use the in-app option
+  above if you want a complete cleanup.
 
 ## Updates
 

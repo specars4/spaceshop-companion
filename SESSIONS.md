@@ -14,6 +14,114 @@ Most-recent first.
 
 ---
 
+## Session 3 — 2026-05-22 — marathon v0.5.4 → v0.6.0 + agent-orchestrated build process
+
+**Outcome:** Started the session on v0.5.3 (signed, published, working).
+Shipped v0.5.4 → v0.5.5 → v0.5.6 → v0.5.7 → v0.5.8 → v0.5.9 → v0.6.0
+in one session, mostly via multi-agent parallel-fix dispatch with
+audit-pair review between waves. Contractor's full onboarding +
+auto-update path verified end-to-end on real hardware (not just the
+dev box).
+
+### v0.5.4 — bug-fix backlog from Session 2
+- Parser handles `submit change <N> to ...` lines in `p4 status`
+  (previously only `reconcile to ...` matched, so files already in a
+  pending changelist were silently skipped from the Changes view)
+- `submit_changes` calls `ensure_workspace_stream_bound` first —
+  auto-heals workspaces created before stream-binding support
+- Pull Latest always clickable, shows "Re-check & pull" when remote
+  has no changes
+- `force_resync` does `revert -k //...` → `flush //...#0` → `sync //...`
+  instead of bare `sync -f` — handles stuck "open for delete" files
+- `initial_sync` delegates to `force_resync` so re-onboards heal
+- Update-check spam suppressed when endpoint is a placeholder
+- Footer removed, YES gates on destructive actions, "SERVER DETAILS"
+  label instead of "COPY THESE INTO UNREAL"
+- Generic-token redaction across docs (`<SPACESHOP_TOOLS_ROOT>` etc.)
+- Dropped `tauri-plugin-shell` + `tauri-plugin-opener` (dead)
+- USER_GUIDE.md + CONTRACTOR_ONBOARDING_TEMPLATE.md rewritten for
+  the v0.5.2 Open-in-Unreal flow
+
+### Repo rename — `spaceshop-companion` → `onboard`
+- Public URL: https://specars4.github.io/onboard/
+- Repo: https://github.com/specars4/onboard
+- All updater endpoints updated; GitHub's repo-rename redirect
+  covers old URLs in the wild
+
+### v0.5.5–v0.5.8 — onboarding install-path fixes from contractor reports
+- v0.5.5: split UPDATE_ENDPOINT_PHRASES into NETWORK / VERIFY /
+  GENERIC so Check-for-updates can report the actual cause
+- v0.5.6: Tailscale msiexec `WaitForExit` (was racing `Select-Object
+  -ExpandProperty ExitCode`)
+- v0.5.7: copy bundled tailscale.msi to %TEMP% before msiexec to
+  dodge "exit 1619 ERROR_INSTALL_PACKAGE_OPEN_FAILED" on paths with
+  spaces (`C:\Program Files\Spaceshop Companion\...`); also Win32
+  GetShortPathName fallback for spacey usernames
+- v0.5.8: streaming-sync wall-clock timeout REMOVED — was killing
+  big-file syncs that legitimately took >1h; replaced with idle-only
+  semantics (later refined to no timeout + `-vnet.maxwait=300`).
+  Fixed Wix `upgradeCode` for clean MajorUpgrade. 8.3 short-name
+  fallback. Larger Refresh button.
+- v0.5.9: backend hardening pack (10 fixes including ensure_binaries
+  startup-error event, explorer.exe path escape, workspace_root
+  guards on all p4 entry points, tailscale JSON parse defensive,
+  p4 stderr classification, find_uproject symlink safety,
+  write_ticket_file Mutex, temp MSI per-process name,
+  `-vnet.maxwait=300`, errors.rs UPDATE_NETWORK/VERIFY/GENERIC split).
+  Frontend: version in header, live pull-progress, error-details
+  disclosure, fatal startup-error banner. Build: rustc 1.94 pin,
+  Tauri 2.11 pin, NSIS dropped. Windows Sandbox smoke harness.
+
+### v0.6.0 — feature wave (Wave 1 + Wave 2 + audit fixes)
+- WiX `util:CloseApplication` fragment re-enabled (top-level
+  Fragment + anchor Component pattern, `componentRefs` reference
+  to satisfy Tauri bundler's link-or-drop semantics)
+- "Repair workspace" button (`p4 clean` + `sync -f`) with confirm
+  modal explaining orphan-deletion
+- Clean uninstall feature with smart Tailscale detection
+  (install-time flag + YYYYMMDD InstallDate fallback), scrubs
+  p4tickets line, deletes Spaceshop data dirs, optional Tailscale
+  uninstall, self-uninstalls via `msiexec /x`
+- Tray polling: runtime icon tinting (luminance-weighted RGBA
+  blend, no extra crate), 30s loop, per-project Sync Now menu,
+  live tooltip
+- Welcome background poll every 3 min with visibility-pause
+- Shared `<Banner>` primitive (UpdateBanner + StartupErrorBanner)
+- `invite::project_name` length + control-char validation
+- `[profile.release.package.tauri] opt-level=1, codegen-units=1`
+  — workaround for deterministic rustc crash on tauri lib at
+  default opt-level=3
+
+### Process changes
+- **Multi-agent parallel fix dispatch** — most v0.6 work done by
+  4-agent waves (each owning a self-contained slice), audited by
+  a 2-agent pair (integration + security/correctness) between
+  waves. Worked well; iteration time was ~30 min per wave including
+  audit + integration + build.
+- **VM testing infra shipped** but not yet enabled (`smoke/` folder).
+  Activate by enabling Windows Sandbox on the build host.
+- **Hot-fix-machine pattern called out** — earlier in session we
+  kept blindly retrying rustc crashes; switched to actually pinning
+  the toolchain and applying targeted opt-level overrides.
+
+### What the contractor sees in v0.6.0
+- Banner update: `v0.5.7 → v0.6.0` on next launch (or via Advanced
+  → Check for updates manually)
+- Header now shows running version
+- Repair workspace + Clean uninstall buttons in Advanced section
+- Color-coded tray icon (green / yellow / red)
+- Per-project Sync from tray menu
+- Live `{count} files · current filename` during pull
+- Auto-update technical details disclosure if Check fails
+
+### Still queued for v0.7
+See BACKLOG.md "Up next (v0.7)" — Cancel button + Win32 I/O byte
+counters, `-ztag` parser refactor, Welcome+tray poll dedup,
+filesystem-watcher byte progress, File History view, installer logo,
+defensive nonce on clean_uninstall, etc.
+
+---
+
 ## Session 2 continuation — 2026-05-21 evening — daily-ops + ship infrastructure
 
 **Outcome:** v0.5.3 shipped to GitHub (public repo, signed, auto-update verified

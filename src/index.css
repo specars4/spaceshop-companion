@@ -100,6 +100,12 @@ input, textarea {
 .btn.btn-ghost:hover:not(:disabled) { background: transparent; color: var(--gold); border-color: var(--gold-dim); }
 .btn.btn-small { padding: 6px 12px; font-size: 10px; }
 .btn.btn-danger { background: transparent; color: var(--danger); border-color: var(--rule); }
+/* Soft danger — less alarming than btn-danger. Used for recovery actions
+   like Repair workspace that are safer than Force re-download but still
+   warrant visual restraint over a happy-path action. Cream-dim text,
+   danger-tinted on hover. */
+.btn.btn-danger-soft { background: transparent; color: var(--cream-dim); border-color: var(--rule); }
+.btn.btn-danger-soft:hover:not(:disabled) { background: transparent; color: var(--danger); border-color: var(--danger); }
 .btn.btn-icon { padding: 10px 12px; }
 
 .card {
@@ -145,6 +151,19 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 22px 0; }
 .project-tile h3 { font-family: var(--font-serif); font-weight: 400; font-size: 17px; margin: 0 0 4px 0; }
 .project-tile .meta { font-size: 11px; color: var(--warm-gray); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
 .project-tile .actions { display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+
+/* Subtle "background re-poll in flight" indicator next to the project name.
+   Slow pulse — meant to be noticed only if you're looking for it. */
+.checking-dot {
+  display: inline-block;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--warm-gray);
+  animation: checking-pulse 1.6s ease-in-out infinite;
+}
+@keyframes checking-pulse {
+  0%, 100% { opacity: 0.25; }
+  50%      { opacity: 0.9;  }
+}
 
 /* ---------- Mockup-only ---------- */
 

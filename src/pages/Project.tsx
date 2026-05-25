@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { CopyField } from "../components/CopyField";
 import { ForceResyncConfirm } from "../components/ForceResyncConfirm";
+import { RepairConfirm } from "../components/RepairConfirm";
+import { UninstallConfirm } from "../components/UninstallConfirm";
 import {
   changeCounts,
   forceResync,
@@ -10,6 +12,7 @@ import {
   openProjectFolder,
   pullLatest,
   removeProject,
+  repairWorkspace,
 } from "../lib/invoke";
 import type { ChangeCounts, Project } from "../lib/types";
 
@@ -41,6 +44,8 @@ export function ProjectView({
   const [pulling, setPulling] = useState(false);
   const [pullMessage, setPullMessage] = useState<string | null>(null);
   const [showForceConfirm, setShowForceConfirm] = useState(false);
+  const [showRepairConfirm, setShowRepairConfirm] = useState(false);
+  const [showUninstallConfirm, setShowUninstallConfirm] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [openingUnreal, setOpeningUnreal] = useState(false);
   const [unrealError, setUnrealError] = useState<string | null>(null);
@@ -51,6 +56,7 @@ export function ProjectView({
   );
   const [pullCount, setPullCount] = useState<number>(0);
   const [pullLastLine, setPullLastLine] = useState<string>("");
+  const [pullMode, setPullMode] = useState<"pull" | "force" | "repair">("pull");
   const [removeConfirmText, setRemoveConfirmText] = useState("");
   const removeArmed = removeConfirmText.trim().toLowerCase() === "yes";
 
@@ -70,8 +76,12 @@ export function ProjectView({
       line: string;
       force?: boolean;
       relocating?: boolean;
+      source?: "tray" | "main";
     }>("pull-progress", (event) => {
       if (event.payload.project_id !== project.project_id) return;
+      // Skip tray-initiated syncs — they don't belong to whatever the
+      // user is doing in the main window and would inflate the counter.
+      if (event.payload.source === "tray") return;
       setPullLastLine(event.payload.line);
       setPullCount((n) => n + 1);
     });
@@ -127,6 +137,7 @@ export function ProjectView({
     setPullMessage(null);
     setPullCount(0);
     setPullLastLine("");
+    setPullMode("pull");
     const start = Date.now();
     try {
       const n = await pullLatest(project.project_id);
@@ -177,6 +188,7 @@ export function ProjectView({
     setPullMessage("Force re-downloading…");
     setPullCount(0);
     setPullLastLine("");
+    setPullMode("force");
     try {
       const n = await forceResync(project.project_id);
       setPullMessage(`Force re-download complete (${n} files).`);
@@ -184,6 +196,30 @@ export function ProjectView({
     } catch (err) {
       const e = err as { title?: string; body?: string };
       setPullMessage(e?.body ?? "Force re-download failed.");
+    } finally {
+      setPulling(false);
+      setPullCount(0);
+      setPullLastLine("");
+    }
+  }
+
+  async function handleRepair() {
+    setShowRepairConfirm(false);
+    setPulling(true);
+    setPullMessage("Repairing workspace…");
+    setPullCount(0);
+    setPullLastLine("");
+    setPullMode("repair");
+    try {
+      const n = await repairWorkspace(project.project_id);
+      setPullMessage(
+        `✓ Workspace repaired (${n} files cleaned and re-synced).`,
+      );
+      await refreshCounts();
+      window.setTimeout(() => setPullMessage(null), 12000);
+    } catch (err) {
+      const e = err as { title?: string; body?: string };
+      setPullMessage(`✗ Repair failed: ${e?.body ?? e?.title ?? "unknown error"}`);
     } finally {
       setPulling(false);
       setPullCount(0);
@@ -408,6 +444,11 @@ export function ProjectView({
             paddingTop: 4,
           }}
         >
+          {pullMode === "repair"
+            ? "Repairing… "
+            : pullMode === "force"
+              ? "Re-downloading… "
+              : "Pulling… "}
           {pullCount} files · {truncate(pullLastLine, 90)}
         </div>
       )}
@@ -589,6 +630,40 @@ export function ProjectView({
               Force re-download…
             </button>
           </div>
+          <div style={{ borderTop: "1px solid var(--rule)", paddingTop: 14 }}>
+            <div
+              style={{
+                fontFamily: "var(--font-serif)",
+                fontSize: 14,
+                marginBottom: 4,
+              }}
+            >
+              Repair workspace
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--cream-dim)",
+                marginBottom: 8,
+              }}
+            >
+              Removes any file in your project folder that isn't tracked
+              by the server, then re-pulls anything missing. Submitted
+              and opened-for-edit files are preserved.{" "}
+              <em style={{ color: "var(--cream)", fontStyle: "italic" }}>
+                Notes or scratch files you've dropped in but never added
+                to p4 will be deleted
+              </em>{" "}
+              — you'll be asked to confirm.
+            </div>
+            <button
+              className="btn btn-small btn-danger-soft"
+              onClick={() => setShowRepairConfirm(true)}
+              disabled={pulling}
+            >
+              Repair workspace…
+            </button>
+          </div>
           <div
             style={{
               borderTop: "1px solid var(--rule)",
@@ -681,6 +756,45 @@ export function ProjectView({
               </div>
             )}
           </div>
+          <div
+            style={{
+              borderTop: "1px solid var(--rule)",
+              paddingTop: 14,
+            }}
+          >
+            <div
+              style={{
+                fontFamily: "var(--font-serif)",
+                fontSize: 14,
+                marginBottom: 4,
+              }}
+            >
+              Uninstall Spaceshop Companion
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--cream-dim)",
+                marginBottom: 8,
+              }}
+            >
+              Removes every trace of Companion from this computer — saved
+              projects, the bundled <code>p4.exe</code>, our line in your
+              p4 tickets file — then starts the Windows uninstaller.{" "}
+              <strong style={{ color: "var(--cream)" }}>
+                Your project files on disk are not touched
+              </strong>{" "}
+              and your account on the server stays valid. If we installed
+              Tailscale for you, you can opt to remove it too.
+            </div>
+            <button
+              className="btn btn-small btn-danger"
+              onClick={() => setShowUninstallConfirm(true)}
+              disabled={pulling}
+            >
+              Uninstall Companion…
+            </button>
+          </div>
         </div>
       </details>
 
@@ -729,6 +843,19 @@ export function ProjectView({
           localChanges={localPending}
           onConfirm={handleForceResync}
           onCancel={() => setShowForceConfirm(false)}
+        />
+      )}
+
+      {showRepairConfirm && (
+        <RepairConfirm
+          onConfirm={handleRepair}
+          onCancel={() => setShowRepairConfirm(false)}
+        />
+      )}
+
+      {showUninstallConfirm && (
+        <UninstallConfirm
+          onCancel={() => setShowUninstallConfirm(false)}
         />
       )}
     </>

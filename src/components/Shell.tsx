@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { Banner } from "./Banner";
 import { UpdateBanner } from "./UpdateBanner";
 
 interface Props {
@@ -80,68 +81,13 @@ function StartupErrorBanner({ error }: { error: StartupError }) {
   const details = error.details ?? "";
 
   return (
-    <div
-      role="alert"
-      style={{
-        background: "rgba(196, 108, 90, 0.18)",
-        borderBottom: "2px solid var(--danger)",
-        padding: "16px 48px",
-        display: "flex",
-        alignItems: "center",
-        gap: 20,
-        fontSize: 14,
-        color: "var(--cream)",
-      }}
+    <Banner
+      severity="danger"
+      label="Fatal error"
+      title={title}
+      body={body || undefined}
+      details={details || undefined}
     >
-      <span
-        style={{
-          color: "var(--danger)",
-          textTransform: "uppercase",
-          letterSpacing: "var(--tracking-caps)",
-          fontSize: 11,
-          fontWeight: 600,
-          whiteSpace: "nowrap",
-        }}
-      >
-        ● Fatal error
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            fontFamily: "var(--font-serif)",
-            fontSize: 15,
-            marginBottom: 2,
-          }}
-        >
-          {title}
-        </div>
-        {body && (
-          <div
-            style={{
-              fontSize: 12,
-              color: "var(--cream-dim)",
-              marginBottom: 4,
-            }}
-          >
-            {body}
-          </div>
-        )}
-        {details && (
-          <div
-            style={{
-              fontSize: 11,
-              color: "var(--cream-dim)",
-              fontFamily: "var(--font-mono)",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-            title={details}
-          >
-            {details}
-          </div>
-        )}
-      </div>
       <a
         href="https://specars4.github.io/onboard/"
         onClick={handleReinstall}
@@ -160,6 +106,6 @@ function StartupErrorBanner({ error }: { error: StartupError }) {
       >
         Reinstall
       </a>
-    </div>
+    </Banner>
   );
 }

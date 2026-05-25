@@ -7,9 +7,25 @@
   Without this, the in-app updater hits "files in use" errors when the
   user runs the auto-update from inside the running app.
 
+  SCHEMA NOTE (v0.6 fix): util:CloseApplication is a TOP-LEVEL element
+  under <Fragment>, <Module>, or <Product>. It is NOT a valid child of
+  <Component> (CNDL0005). The element compiles into a CustomAction that
+  gets scheduled in InstallExecuteSequence by the WixUtilExtension - it
+  does not need a Component to host it.
+
+  FRAGMENT-LINKING NOTE: Tauri's bundler only pulls a fragment into the
+  build if at least one of its IDs is referenced via componentRefs,
+  componentGroupRefs, featureRefs, etc. WiX fragments are atomic - once
+  any element in the fragment is referenced, the WHOLE fragment is
+  linked, including non-Component elements like util:CloseApplication.
+  So we keep a tiny placeholder Component (HKCU RegistryValue KeyPath)
+  alongside CloseApplication purely as the "anchor" that componentRefs
+  in tauri.conf.json points at. Without that anchor, Tauri would
+  silently skip the fragment (known issue: tauri-apps/tauri#5970).
+
   Wired into the installer via tauri.conf.json -> bundle.windows.wix:
       "fragmentPaths": ["wix/fragment.wxs"]
-      "componentRefs": ["CompanionCloseApp"]
+      "componentRefs": ["CompanionCloseAppAnchor"]
 
   Tauri 2.x bundler links WixUtilExtension by default (see
   tauri-bundler/src/bundle/windows/msi/mod.rs, fragment_extensions),
@@ -29,35 +45,41 @@
      xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
   <Fragment>
     <!--
-      Component must live in a Directory. TARGETDIR is the canonical
-      "this component is not file-bound" parent. The component carries
-      a tiny HKCU registry KeyPath because every component needs one,
-      and util:CloseApplication is not itself a valid KeyPath.
+      Target  = process image name to look for and close.
+      CloseMessage = "yes" -> send WM_CLOSE for graceful shutdown.
+      RebootPrompt = "no"  -> never schedule a reboot for this app.
+      TerminateProcess = 5000 -> if WM_CLOSE doesn't land within the
+                                 Timeout window, kill the process with
+                                 this exit code so the upgrade can
+                                 proceed (we'd rather a hard kill than
+                                 a stuck installer).
+      Timeout = 5 -> wait 5 seconds for graceful exit before terminate.
+    -->
+    <util:CloseApplication Id="CloseSpaceshopCompanion"
+                           Target="spaceshop-companion.exe"
+                           CloseMessage="yes"
+                           RebootPrompt="no"
+                           TerminateProcess="5000"
+                           Timeout="5" />
+
+    <!--
+      Placeholder Component - this exists solely so Tauri's bundler has
+      an Id to put in componentRefs, which triggers fragment linking
+      and pulls util:CloseApplication into the build. Lives under
+      TARGETDIR (canonical "not file-bound" parent) and carries an HKCU
+      RegistryValue KeyPath because every Component needs a KeyPath
+      and registry values don't require admin rights on uninstall.
     -->
     <DirectoryRef Id="TARGETDIR">
-      <Component Id="CompanionCloseApp"
+      <Component Id="CompanionCloseAppAnchor"
                  Guid="B5E7A6C2-3F9B-4D8E-9A11-7C2E4F8B6D40"
                  Win64="yes">
         <RegistryValue Root="HKCU"
                        Key="Software\Spaceshop Studios\Companion"
-                       Name="CloseAppMarker"
+                       Name="CloseAppFragmentAnchor"
                        Type="integer"
                        Value="1"
                        KeyPath="yes" />
-        <!--
-          Target  = process image name to look for and close.
-          CloseMessage = "yes" -> send WM_CLOSE for graceful shutdown.
-          RebootPrompt = "no"  -> never schedule a reboot for this app.
-          TerminateProcess = 5000 -> if WM_CLOSE doesn't land in 5s,
-                                     kill the process so the upgrade
-                                     can proceed (we'd rather a hard
-                                     kill than a stuck installer).
-        -->
-        <util:CloseApplication Id="CloseSpaceshopCompanion"
-                               Target="spaceshop-companion.exe"
-                               CloseMessage="yes"
-                               RebootPrompt="no"
-                               TerminateProcess="5000" />
       </Component>
     </DirectoryRef>
   </Fragment>

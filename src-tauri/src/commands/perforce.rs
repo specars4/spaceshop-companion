@@ -41,7 +41,7 @@ use super::paths;
 /// sufficient: writes are short, single-process (we already enforce
 /// single-instance via tauri-plugin-single-instance), and Windows
 /// p4tickets.txt isn't accessed by anyone else mid-Companion-session.
-static TICKET_FILE_LOCK: Mutex<()> = Mutex::new(());
+pub(super) static TICKET_FILE_LOCK: Mutex<()> = Mutex::new(());
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -71,6 +71,47 @@ const SYNC_POST_EOF_TIMEOUT: Duration = Duration::from_secs(30);
 // That's planned for a future version with a proper Cancel button;
 // see BACKLOG. For now, sync runs to completion or until the user
 // quits Companion.
+//
+// NOTE on byte-level progress (v0.6 investigation — DO NOT re-add `-I -q`):
+//
+// `p4 -I sync -q` is advertised in Perforce docs as a "progress
+// indicator," and it sounds like the fix for the 50 GB single-file
+// silent gap above. It is NOT. We tested it against a real depot on
+// 2026-05-22 and cross-checked the upstream p4 mailing list
+// (perforce-user, "[p4] Useless 'Get Revision Progress' bar"):
+//
+//   - `-I` reports progress at FILE-count granularity, not bytes.
+//     A 1-of-1 sync of a single 50 GB file shows "sync 0% |" then
+//     "sync 100% |finishing" with nothing in between — the user
+//     still sees no feedback during the long byte transfer.
+//
+//   - The output format is a terminal-style progress bar with
+//     `\b` (0x08) backspace overwrites on a single line, NOT
+//     line-delimited records. Captured bytes for a small sync:
+//        73 79 6e 63 20 31 30 30 25 20 7c 08 66 69 6e 69 73 68 69 6e 67
+//        "sync 100% |\bfinishing\r\n"
+//     Not machine-parseable without rewriting our reader to handle
+//     terminal control sequences.
+//
+//   - `-I` is mutually exclusive with `-s`, `-e`, `-G`, and adding it
+//     SUPPRESSES the per-file completion lines we currently emit
+//     to the UI. Net effect would be strictly less feedback, not
+//     more — the user would lose "file N of M synced" and gain
+//     nothing in return.
+//
+// The `ClientProgress` C++ API (p4api) DOES expose per-file byte
+// updates via `Update()` callbacks, but the `p4` command-line client
+// only surfaces those as the file-count percent bar above. Getting
+// real byte-level progress would require linking p4api directly
+// (large native dep) or shelling out to p4python. Both are v0.7+
+// scope; see BACKLOG.md "byte-level progress for single large files".
+//
+// What we ship instead today: the file-completion lines from plain
+// `p4 sync` stdout, surfaced as `pull-progress` events with `line`
+// and a running `pullCount` in the UI. Good feedback for the common
+// case (many medium files), insufficient for the worst case (one
+// huge file). Worth fixing properly in v0.7, not papering over with
+// `-I` in v0.6.
 
 fn no_window() -> u32 {
     0x08000000
@@ -793,6 +834,8 @@ pub async fn p4_relocate_project<R: tauri::Runtime>(
 ) -> Result<u32, CompanionError> {
     use super::projects::{save_persisted, ProjectState};
 
+    let _pulling = PullingGuard::new(app.clone(), project_id.clone());
+
     // Look up project + cfg
     let (cfg, workspace, _) = {
         let state = app.state::<ProjectState>();
@@ -841,7 +884,7 @@ pub async fn p4_relocate_project<R: tauri::Runtime>(
     initial_sync(&cfg, &workspace, &new_path, move |line| {
         let _ = app_for_progress.emit(
             "pull-progress",
-            serde_json::json!({ "project_id": pid, "line": line, "relocating": true }),
+            serde_json::json!({ "project_id": pid, "line": line, "relocating": true, "source": "main" }),
         );
     })
     .await
@@ -1073,6 +1116,69 @@ where
     .await
 }
 
+/// Surgical recovery for a workspace that drifted out of sync with the
+/// server but where Pull Latest isn't fixing it (orphan files on disk
+/// that the server doesn't know about, partial-sync interruption, a
+/// corrupted have-table, etc.).
+///
+/// Sequence:
+///   1. `p4 clean //...` — removes orphan files (anything on disk the
+///      server doesn't track) and reverts files that were edited
+///      WITHOUT being opened for edit. Critically, this does NOT touch
+///      files that are properly opened in a pending changelist — so
+///      Repair is safe to run with pending work in flight, unlike
+///      Force re-download which nukes everything.
+///   2. `p4 sync -f //...` — re-pulls every file from the server,
+///      ignoring the have-table. Heals the case where the have-table
+///      claims we have files that aren't actually on disk (or have the
+///      wrong content), which plain `p4 sync` won't fix.
+///
+/// Streams progress identically to `force_resync` — same `pull-progress`
+/// event consumers on the frontend work without changes.
+///
+/// Pre-flight: verifies the workspace root exists; bails with the
+/// standard "folder is gone, use Relocate" error otherwise.
+pub async fn repair_workspace<F>(
+    config: &P4Config,
+    workspace: &str,
+    workspace_root: &Path,
+    mut on_progress: F,
+) -> Result<u32, CompanionError>
+where
+    F: FnMut(&str),
+{
+    verify_workspace_root_exists(workspace_root)?;
+
+    // Best-effort stream binding heal — keeps repair useful on old
+    // pre-stream-bound workspaces, same pattern as force_resync.
+    let _ = ensure_workspace_stream_bound(config, workspace).await;
+
+    // 1. p4 clean //... — remove orphans, restore unopened edits.
+    //    Streams one line per affected file the same way sync does,
+    //    so we reuse run_streaming_sync (the helper is misnamed but
+    //    handles any streaming p4 op).
+    run_streaming_sync(
+        config,
+        workspace,
+        workspace_root,
+        &["clean", "//..."],
+        &mut on_progress,
+        "repair clean",
+    )
+    .await?;
+
+    // 2. p4 sync -f //... — force re-pull from server, ignoring have-table.
+    run_streaming_sync(
+        config,
+        workspace,
+        workspace_root,
+        &["sync", "-f", "//..."],
+        on_progress,
+        "repair sync",
+    )
+    .await
+}
+
 /// Shared implementation for streaming `p4 sync` variants. Spawns the
 /// child, streams stdout line-by-line emitting each one as progress,
 /// and uses an idle timeout (no progress in SYNC_IDLE_TIMEOUT) instead
@@ -1274,17 +1380,45 @@ pub async fn p4_restore_file<R: tauri::Runtime>(
     restore_file(&cfg, &workspace, &root, &local_path).await
 }
 
+/// RAII guard that marks a project as "pulling" in TrayPollState for
+/// the duration of a long Perforce op (pull/force-resync/repair/relocate).
+/// On Drop the project is unmarked, so the tray poll loop can resume
+/// running `change_counts` against the workspace. Covers both the Ok and
+/// Err return paths, plus any early `?` propagation.
+struct PullingGuard<R: tauri::Runtime> {
+    app: tauri::AppHandle<R>,
+    project_id: String,
+}
+
+impl<R: tauri::Runtime> PullingGuard<R> {
+    fn new(app: tauri::AppHandle<R>, project_id: String) -> Self {
+        if let Some(state) = app.try_state::<super::tray_poll::TrayPollState>() {
+            state.mark_pulling(&project_id);
+        }
+        Self { app, project_id }
+    }
+}
+
+impl<R: tauri::Runtime> Drop for PullingGuard<R> {
+    fn drop(&mut self) {
+        if let Some(state) = self.app.try_state::<super::tray_poll::TrayPollState>() {
+            state.unmark_pulling(&self.project_id);
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn p4_pull_latest<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     project_id: String,
 ) -> Result<u32, CompanionError> {
+    let _pulling = PullingGuard::new(app.clone(), project_id.clone());
     let (cfg, workspace, root) = project_config(&app, &project_id)?;
     let app_for_progress = app.clone();
     sync_workspace(&cfg, &workspace, &root, move |line| {
         let _ = app_for_progress.emit(
             "pull-progress",
-            serde_json::json!({ "project_id": project_id, "line": line }),
+            serde_json::json!({ "project_id": project_id, "line": line, "source": "main" }),
         );
     })
     .await
@@ -1295,13 +1429,32 @@ pub async fn p4_force_resync<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     project_id: String,
 ) -> Result<u32, CompanionError> {
+    let _pulling = PullingGuard::new(app.clone(), project_id.clone());
     let (cfg, workspace, root) = project_config(&app, &project_id)?;
     let app_for_progress = app.clone();
     let pid_for_event = project_id.clone();
     force_resync(&cfg, &workspace, &root, move |line| {
         let _ = app_for_progress.emit(
             "pull-progress",
-            serde_json::json!({ "project_id": pid_for_event, "line": line, "force": true }),
+            serde_json::json!({ "project_id": pid_for_event, "line": line, "force": true, "source": "main" }),
+        );
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn p4_repair_workspace<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    project_id: String,
+) -> Result<u32, CompanionError> {
+    let _pulling = PullingGuard::new(app.clone(), project_id.clone());
+    let (cfg, workspace, root) = project_config(&app, &project_id)?;
+    let app_for_progress = app.clone();
+    let pid_for_event = project_id.clone();
+    repair_workspace(&cfg, &workspace, &root, move |line| {
+        let _ = app_for_progress.emit(
+            "pull-progress",
+            serde_json::json!({ "project_id": pid_for_event, "line": line, "repair": true, "source": "main" }),
         );
     })
     .await

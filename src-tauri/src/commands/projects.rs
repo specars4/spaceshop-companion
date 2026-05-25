@@ -125,6 +125,8 @@ pub async fn remove_project<R: Runtime>(
         drop(guard);
         save_persisted(&app, &snapshot).map_err(CompanionError::Other)?;
     }
+    // Refresh tray menu so the removed project's "Sync" item disappears.
+    super::tray_poll::rebuild_menu(&app);
     Ok(())
 }
 

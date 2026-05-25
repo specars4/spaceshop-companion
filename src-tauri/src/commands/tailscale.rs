@@ -13,9 +13,20 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::time::timeout;
+use tracing::warn;
 
 use super::errors::CompanionError;
 use super::paths;
+
+/// Marker file we write after a successful MSI install of Tailscale.
+/// Clean Uninstall (see `uninstall.rs::detect_tailscale_origin`) reads
+/// this to decide whether the "Also uninstall Tailscale" checkbox
+/// defaults ON (we installed it → safe to remove on our way out) or
+/// OFF (pre-existing → leaving it alone is the safer choice).
+///
+/// Filename is intentionally a `.flag` rather than `.json` so a casual
+/// glance at the dir doesn't suggest the file is meant to be edited.
+pub const TAILSCALE_INSTALL_FLAG: &str = "tailscale-installed-by-us.flag";
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(45);
 
@@ -211,6 +222,14 @@ pub async fn down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), Co
 /// We launch `msiexec` via PowerShell's `Start-Process -Verb RunAs -Wait`
 /// so the UAC prompt fires correctly and we can wait for completion
 /// before probing.
+///
+/// On success (exit 0 or 3010 → reboot required) we drop a marker file
+/// at `%LOCALAPPDATA%\Spaceshop\Companion\tailscale-installed-by-us.flag`
+/// so Clean Uninstall can later tell that *we* installed Tailscale
+/// (and default the "also uninstall Tailscale" checkbox ON). Failing
+/// to write the flag is a `warn!`, not a hard error — Tailscale itself
+/// is installed and usable, the worst case is the heuristic fallback
+/// kicks in at uninstall time.
 pub async fn install_via_msi<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<(), CompanionError> {
@@ -315,7 +334,15 @@ pub async fn install_via_msi<R: tauri::Runtime>(
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let exit: i32 = stdout.parse().unwrap_or(0);
     match exit {
-        0 | 3010 => Ok(()),
+        0 | 3010 => {
+            // Best-effort: stamp the install-flag so Clean Uninstall
+            // knows we own this Tailscale install. See module-level
+            // TAILSCALE_INSTALL_FLAG and uninstall::detect_tailscale_origin.
+            if let Err(e) = write_tailscale_install_flag(app) {
+                warn!("could not write tailscale install-flag: {e}");
+            }
+            Ok(())
+        }
         1602 | 1603 => Err(CompanionError::Tailscale(
             "Permission denied. Click Yes on the Windows permission prompt next time.".into(),
         )),
@@ -334,6 +361,34 @@ pub async fn install_via_msi<R: tauri::Runtime>(
             dst_msi.display(),
         ))),
     }
+}
+
+/// Write the "Tailscale was installed by Companion" marker. Lives in
+/// %LOCALAPPDATA%\Spaceshop\Companion\ so it gets nuked alongside the
+/// rest of our state when Clean Uninstall runs (no stale flag survives
+/// a future Tailscale install by someone else).
+///
+/// Contents: a tiny JSON record with the install timestamp + our build
+/// version, so future Companion versions can decide whether to honor
+/// an old flag if our policy ever needs to change.
+fn write_tailscale_install_flag<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<(), String> {
+    let dir = paths::app_local_data_dir(app)?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("could not create app data dir: {e}"))?;
+    let path = dir.join(TAILSCALE_INSTALL_FLAG);
+    let record = serde_json::json!({
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "companion_version": env!("CARGO_PKG_VERSION"),
+    });
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&record)
+            .unwrap_or_else(|_| "{}".to_string()),
+    )
+    .map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    Ok(())
 }
 
 /// Convert a path to its Windows 8.3 short-name form if possible. The

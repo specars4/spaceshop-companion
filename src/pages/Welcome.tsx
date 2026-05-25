@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -14,6 +14,9 @@ interface Props {
   onOpenProject: (project: Project) => void;
 }
 
+// How often we re-poll p4 status hints for tiles on the Welcome page.
+// Token cost is tiny (p4 changes -m1 + p4 reconcile -n per project), but we
+// pause while the window is hidden — see the visibilitychange handler below.
 const REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 
 export function Welcome({ onInvite, onOpenProject }: Props) {
@@ -23,38 +26,154 @@ export function Welcome({ onInvite, onOpenProject }: Props) {
   const [countsByProject, setCountsByProject] = useState<
     Record<string, ChangeCounts | "offline" | "loading">
   >({});
+  // Project IDs whose background re-poll is currently in flight. Drives the
+  // subtle "checking" dot on each tile and lets us skip overlapping fetches.
+  const [checkingIds, setCheckingIds] = useState<Set<string>>(() => new Set());
 
+  // Refs used by the background poller. They survive re-renders and let the
+  // interval callback read the latest projects / counts / mounted-state
+  // without re-creating the interval every render.
+  const mountedRef = useRef(true);
+  const inFlightRef = useRef<Set<string>>(new Set());
+  const projectsRef = useRef<Project[]>([]);
+  const countsRef = useRef(countsByProject);
+
+  useEffect(() => {
+    projectsRef.current = projects;
+  }, [projects]);
+  useEffect(() => {
+    countsRef.current = countsByProject;
+  }, [countsByProject]);
+
+  // Initial load: list projects + fetch first-pass counts for each. This is
+  // the only path that sets a project's counts to "loading" — the background
+  // poll below leaves stale counts visible while it refetches so the tile
+  // doesn't flicker its hint text every 3 minutes.
   const loadProjects = useCallback(async () => {
     try {
       const list = await listProjects();
+      if (!mountedRef.current) return;
       setProjects(list);
-      // Kick off background count poll for each project
       list.forEach((p) => {
         setCountsByProject((prev) => ({ ...prev, [p.project_id]: "loading" }));
+        inFlightRef.current.add(p.project_id);
         changeCounts(p.project_id)
-          .then((c) =>
-            setCountsByProject((prev) => ({ ...prev, [p.project_id]: c })),
-          )
-          .catch(() =>
-            setCountsByProject((prev) => ({ ...prev, [p.project_id]: "offline" })),
-          );
+          .then((c) => {
+            if (!mountedRef.current) return;
+            setCountsByProject((prev) => ({ ...prev, [p.project_id]: c }));
+          })
+          .catch(() => {
+            if (!mountedRef.current) return;
+            setCountsByProject((prev) => ({
+              ...prev,
+              [p.project_id]: "offline",
+            }));
+          })
+          .finally(() => {
+            inFlightRef.current.delete(p.project_id);
+          });
       });
     } catch {
+      if (!mountedRef.current) return;
       setProjects([]);
     }
   }, []);
 
+  // Re-poll counts only (does NOT re-list projects). Skips projects whose
+  // last result was folder_missing (no point — folder needs relocating) and
+  // skips projects with a request already in flight from a previous tick.
+  const refreshCounts = useCallback(() => {
+    const list = projectsRef.current;
+    const currentCounts = countsRef.current;
+    list.forEach((p) => {
+      if (inFlightRef.current.has(p.project_id)) return;
+      const existing = currentCounts[p.project_id];
+      if (
+        existing !== undefined &&
+        existing !== "loading" &&
+        existing !== "offline" &&
+        existing.folder_missing
+      ) {
+        return; // folder is gone — operator has to relocate first
+      }
+      inFlightRef.current.add(p.project_id);
+      setCheckingIds((prev) => {
+        const next = new Set(prev);
+        next.add(p.project_id);
+        return next;
+      });
+      changeCounts(p.project_id)
+        .then((c) => {
+          if (!mountedRef.current) return;
+          setCountsByProject((prev) => ({ ...prev, [p.project_id]: c }));
+        })
+        .catch(() => {
+          if (!mountedRef.current) return;
+          setCountsByProject((prev) => ({
+            ...prev,
+            [p.project_id]: "offline",
+          }));
+        })
+        .finally(() => {
+          inFlightRef.current.delete(p.project_id);
+          if (!mountedRef.current) return;
+          setCheckingIds((prev) => {
+            if (!prev.has(p.project_id)) return prev;
+            const next = new Set(prev);
+            next.delete(p.project_id);
+            return next;
+          });
+        });
+    });
+  }, []);
+
   useEffect(() => {
+    mountedRef.current = true;
     loadProjects();
-    const interval = window.setInterval(loadProjects, REFRESH_INTERVAL_MS);
     const unlisten = listen<string>("deep-link-invite", (event) => {
       setCode(event.payload);
     });
+
+    // Background poll lifecycle. We keep a single interval handle and (re)create
+    // it on visibility change. The 3-minute setInterval naturally satisfies the
+    // "don't fire immediately on mount" constraint — first tick lands at +3min.
+    let interval: number | null = null;
+    const start = () => {
+      if (interval !== null) return;
+      interval = window.setInterval(refreshCounts, REFRESH_INTERVAL_MS);
+    };
+    const stop = () => {
+      if (interval !== null) {
+        window.clearInterval(interval);
+        interval = null;
+      }
+      // Drop in-flight tracking so the next visible-tick starts fresh. The
+      // promises themselves still resolve; mountedRef guards the setState.
+      inFlightRef.current.clear();
+      setCheckingIds((prev) => (prev.size === 0 ? prev : new Set()));
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        // Refresh immediately on re-show so a user who left for >3 min
+        // doesn't see stale hints, then resume the cadence.
+        refreshCounts();
+        start();
+      } else {
+        stop();
+      }
+    };
+
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     return () => {
-      window.clearInterval(interval);
+      mountedRef.current = false;
+      stop();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       unlisten.then((fn) => fn());
     };
-  }, [loadProjects]);
+  }, [loadProjects, refreshCounts]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -101,6 +220,7 @@ export function Welcome({ onInvite, onOpenProject }: Props) {
               key={p.project_id}
               project={p}
               counts={countsByProject[p.project_id]}
+              checking={checkingIds.has(p.project_id)}
               onOpen={() => onOpenProject(p)}
               onRelocated={() => loadProjects()}
             />
@@ -147,11 +267,19 @@ export function Welcome({ onInvite, onOpenProject }: Props) {
 interface TileProps {
   project: Project;
   counts: ChangeCounts | "offline" | "loading" | undefined;
+  /** True while a background re-poll is in flight for this project. */
+  checking: boolean;
   onOpen: () => void;
   onRelocated: () => void;
 }
 
-function ProjectTile({ project, counts, onOpen, onRelocated }: TileProps) {
+function ProjectTile({
+  project,
+  counts,
+  checking,
+  onOpen,
+  onRelocated,
+}: TileProps) {
   const [relocating, setRelocating] = useState(false);
   const [relocateError, setRelocateError] = useState<string | null>(null);
 
@@ -247,7 +375,19 @@ function ProjectTile({ project, counts, onOpen, onRelocated }: TileProps) {
   return (
     <div className="project-tile">
       <div>
-        <h3>{project.project_name}</h3>
+        <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span>{project.project_name}</span>
+          {/* Subtle "background re-poll in flight" indicator. Only shown
+              when we already have counts displayed — during the very first
+              load the "Checking…" hint covers it, so no need to double up. */}
+          {checking && counts !== "loading" && counts !== undefined && (
+            <span
+              className="checking-dot"
+              title="Refreshing status…"
+              aria-label="Refreshing status"
+            />
+          )}
+        </h3>
         <div
           style={{
             display: "flex",

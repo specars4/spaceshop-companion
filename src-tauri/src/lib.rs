@@ -2,13 +2,12 @@ mod commands;
 
 use std::sync::Mutex;
 
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tracing::{info, warn};
 
 use commands::projects::ProjectState;
+use commands::tray_poll::{build_initial_tray, build_tinted_icons, spawn_poll_task, TrayPollState};
 
 const DEEP_LINK_EVENT: &str = "deep-link-invite";
 
@@ -43,6 +42,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .manage(ProjectState {
             inner: Mutex::new(Vec::new()),
         })
@@ -106,10 +106,16 @@ pub fn run() {
                 }
             });
 
-            // Build tray icon. Default icon is whatever the app icon
-            // resolves to; status color (green/yellow/red) will be
-            // overlaid in Phase 6 polish.
-            build_tray(app.handle())?;
+            // Build tray icon. Tinted variants (green/yellow/red) are
+            // baked from the source tray.png at startup; the tray-poll
+            // task then swaps between them every 30s based on
+            // Tailscale + Perforce health. The menu also includes a
+            // "Sync <Project>" item per onboarded project and is
+            // rebuilt on add/remove.
+            let icons = build_tinted_icons(app.handle());
+            app.manage(TrayPollState::new(icons));
+            build_initial_tray(app.handle())?;
+            spawn_poll_task(app.handle().clone());
 
             // Background update check — emits 'update-available' event
             // when a newer version is published. Frontend shows a banner.
@@ -141,6 +147,7 @@ pub fn run() {
             commands::perforce::p4_restore_file,
             commands::perforce::p4_pull_latest,
             commands::perforce::p4_force_resync,
+            commands::perforce::p4_repair_workspace,
             commands::perforce::p4_reveal_in_explorer,
             commands::perforce::p4_relocate_project,
             commands::projects::list_projects,
@@ -150,43 +157,11 @@ pub fn run() {
             commands::updater::check_for_updates,
             commands::updater::install_update,
             commands::unreal::open_in_unreal,
+            commands::uninstall::detect_tailscale_origin_cmd,
+            commands::uninstall::clean_uninstall_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Spaceshop Companion");
-}
-
-fn load_tray_icon<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::image::Image<'static> {
-    // Look for the custom PNG in two places:
-    //  - packaged build: <resources>/icons/tray.png
-    //  - dev build: src-tauri/icons/tray.png (relative to cwd when run via `tauri dev`)
-    let candidate_paths: Vec<std::path::PathBuf> = {
-        let mut v: Vec<std::path::PathBuf> = Vec::new();
-        if let Ok(res_dir) = app.path().resource_dir() {
-            v.push(res_dir.join("icons").join("tray.png"));
-        }
-        v.push(std::path::PathBuf::from("icons/tray.png"));
-        v.push(std::path::PathBuf::from("src-tauri/icons/tray.png"));
-        v
-    };
-
-    for p in candidate_paths {
-        if p.exists() {
-            if let Ok(img) = tauri::image::Image::from_path(&p) {
-                return img;
-            }
-        }
-    }
-
-    if let Some(default) = app.default_window_icon() {
-        // The borrowed Image needs to be promoted to an owned ('static)
-        // value before we can return it.
-        return tauri::image::Image::new_owned(
-            default.rgba().to_vec(),
-            default.width(),
-            default.height(),
-        );
-    }
-    tauri::image::Image::new_owned(vec![0; 32 * 32 * 4], 32, 32)
 }
 
 fn extract_invite_from_url(url: &str) -> Option<String> {
@@ -199,65 +174,6 @@ fn extract_invite_from_url(url: &str) -> Option<String> {
         return Some(rest.to_string());
     }
     None
-}
-
-fn build_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open Companion", true, None::<&str>)?;
-    let add = MenuItem::with_id(app, "add", "Add Project…", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-
-    let menu = Menu::with_items(app, &[&open, &add, &separator, &quit])?;
-
-    // Tray icon resolution order:
-    //   1. src-tauri/icons/tray.png   ← drop a custom 32x32 PNG here
-    //   2. app's default window icon (icons/icon.ico)
-    //   3. an empty placeholder (Tauri requires SOMETHING)
-    // The custom path is bundled as a resource via tauri.conf.json so the
-    // installed build can find it the same way.
-    let tray_icon = load_tray_icon(app);
-
-    let _tray = TrayIconBuilder::with_id("main-tray")
-        .menu(&menu)
-        .tooltip("Spaceshop Companion")
-        .icon(tray_icon)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "open" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                    let _ = win.unminimize();
-                }
-            }
-            "add" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                    let _ = win.emit("nav", "/onboard");
-                }
-            }
-            "quit" => {
-                app.exit(0);
-            }
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            // Single left-click → open window.
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                if let Some(win) = tray.app_handle().get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.set_focus();
-                    let _ = win.unminimize();
-                }
-            }
-        })
-        .build(app)?;
-    Ok(())
 }
 
 mod plugins {

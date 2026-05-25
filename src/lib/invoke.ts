@@ -67,6 +67,10 @@ export async function forceResync(projectId: string): Promise<number> {
   return invoke<number>("p4_force_resync", { projectId });
 }
 
+export async function repairWorkspace(projectId: string): Promise<number> {
+  return invoke<number>("p4_repair_workspace", { projectId });
+}
+
 export async function relocateProject(
   projectId: string,
   newRoot: string,
@@ -85,4 +89,39 @@ export interface OpenInUnrealResult {
 
 export async function openInUnreal(projectId: string): Promise<OpenInUnrealResult> {
   return invoke<OpenInUnrealResult>("open_in_unreal", { projectId });
+}
+
+// ---- v0.6 clean uninstall ----
+
+/// Where Tailscale came from, from Companion's point of view.
+/// Mirrors the Rust enum in src-tauri/src/commands/uninstall.rs.
+export type TailscaleOrigin =
+  | "installedByUs"
+  | "preExisting"
+  | "notInstalled"
+  | "unknown";
+
+export async function detectTailscaleOrigin(): Promise<TailscaleOrigin> {
+  return invoke<TailscaleOrigin>("detect_tailscale_origin_cmd");
+}
+
+/// Result of a Clean Uninstall run. Mirrors `CleanUninstallResult` in
+/// `uninstall.rs`. The UninstallConfirm modal uses these flags to show
+/// a brief "what we did" summary in the second-or-so between the IPC
+/// reply and Companion's process exit.
+export interface CleanUninstallResult {
+  p4ticketsScrubbed: boolean;
+  appdataRemoved: boolean;
+  localappdataRemoved: boolean;
+  tailscaleUninstalled: boolean;
+  companionUninstallFired: boolean;
+  fellBackToSettings: boolean;
+}
+
+export async function cleanUninstall(
+  removeTailscale: boolean,
+): Promise<CleanUninstallResult> {
+  return invoke<CleanUninstallResult>("clean_uninstall_cmd", {
+    removeTailscale,
+  });
 }

@@ -125,6 +125,28 @@ fn validate(payload: &InviteData) -> Result<(), CompanionError> {
         )));
     }
 
+    // project_name: bounded length and no control characters. This name
+    // flows into tray menu labels ("Sync <project_name>") and toast
+    // notifications, so an attacker-crafted invite with a 50 KB name or
+    // embedded newlines/NULs would either break the menu rendering or
+    // smuggle multi-line text into a single-line label. Cap at 100 chars
+    // — comfortably longer than any real project name, short enough to
+    // fit in a tray menu without truncation surprises.
+    if payload.project_name.is_empty() || payload.project_name.len() > 100 {
+        return Err(CompanionError::InviteInvalid(
+            "project_name must be 1-100 characters".into(),
+        ));
+    }
+    if payload
+        .project_name
+        .chars()
+        .any(|c| c == '\0' || c == '\n' || c == '\r' || c.is_control())
+    {
+        return Err(CompanionError::InviteInvalid(
+            "project_name contains invalid control characters".into(),
+        ));
+    }
+
     // Workspace view non-empty.
     if payload.perforce.workspace_template.view.is_empty() {
         return Err(CompanionError::InviteInvalid(

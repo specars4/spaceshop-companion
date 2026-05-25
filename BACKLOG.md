@@ -4,6 +4,20 @@ Queued work for future Companion sessions. Cleared as items ship; new items
 land here whenever Arsen flags something or a session uncovers it. Most-recent
 top.
 
+## Shipped in v0.6
+
+- **Clean uninstall feature** ✓ — "Uninstall Spaceshop Companion" button
+  in Project → Advanced. Removes our line(s) from `%USERPROFILE%\p4tickets.txt`
+  (preserves other apps' tickets), nukes `%APPDATA%\Spaceshop\` and
+  `%LOCALAPPDATA%\Spaceshop\` recursively, optionally uninstalls Tailscale
+  via `msiexec /x` (smart-default checkbox: ON only if we have a flag
+  file proving we installed it, or if registry InstallDate matches
+  Companion's same-day), and fires `msiexec /x {companion}` /passive
+  before exiting. Falls back to `ms-settings:appsfeatures` if the
+  ProductCode isn't in the Uninstall registry. Type-YES gated.
+  See `src-tauri/src/commands/uninstall.rs` and
+  `src/components/UninstallConfirm.tsx`.
+
 ## Up next (v0.6)
 
 - **Background poll for status hints** — Companion currently knows what
@@ -38,13 +52,18 @@ top.
   truth is "fetched it fine but the signature didn't verify against my
   embedded pubkey" (e.g., after a key rotation). Split into two
   distinct friendly messages: one for network, one for signature.
-- **Live progress on the Pull Latest button** — the Rust backend
-  emits `pull-progress` events with the current filename per
-  ([perforce.rs::sync_workspace](src-tauri/src/commands/perforce.rs)),
-  but the project page just shows "Pulling…" with no detail. Wire the
-  events into the project page the same way the Connecting screen
-  shows file count + last filename during onboarding. Becomes
-  important when contractors pull large updates on real projects.
+- **Byte-level progress for single large files** — current
+  `pull-progress` events fire once per file *after* it finishes
+  downloading. On a 50 GB Unreal `.uasset` the UI sits silent for 30+
+  minutes and looks frozen. We investigated `p4 -I sync -q` in v0.6
+  (see the long NOTE in `perforce.rs`) and confirmed it does NOT
+  solve this — it reports file-count percent only, suppresses our
+  per-file lines, and emits a terminal-style backspaced progress bar
+  rather than parseable records. Real fix requires either linking
+  p4api (C++) for `ClientProgress::Update()` callbacks, shelling out
+  to p4python, or watching the on-disk file size of the in-progress
+  download via an OS file-system watcher and inferring bytes/sec from
+  delta. v0.7+ work.
 - **`SYNC_TIMEOUT` may bite real projects** — currently hardcoded to
   1 hour in `perforce.rs`. A truly large initial sync (hundreds of GB
   on a typical home connection) will time out and the contractor is

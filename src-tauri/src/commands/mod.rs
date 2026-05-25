@@ -6,5 +6,7 @@ pub mod paths;
 pub mod perforce;
 pub mod projects;
 pub mod tailscale;
+pub mod tray_poll;
+pub mod uninstall;
 pub mod unreal;
 pub mod updater;

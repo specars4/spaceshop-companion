@@ -232,6 +232,9 @@ pub async fn apply_invite<R: Runtime>(
         save_persisted(&app, &snapshot).map_err(CompanionError::Other)?;
     }
 
+    // Refresh tray menu so the new project gets its "Sync <Name>" item.
+    super::tray_poll::rebuild_menu(&app);
+
     emit(
         &app,
         OnboardingEvent::Complete {

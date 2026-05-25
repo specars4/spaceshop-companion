@@ -32,13 +32,20 @@ incremental = true
 opt-level = 0
 debug = false
 
-# Workaround for rustc 1.95 + MSVC codegen crashes on our crate at
-# opt-level=3 (seen as STATUS_ACCESS_VIOLATION and STATUS_STACK_BUFFER_OVERRUN
-# on the spaceshop-companion lib during release builds). Dropping to
-# opt-level=1 dodges the buggy LLVM pass. Runtime perf cost is
-# imperceptible for a Tauri GUI app — there's no hot loop in our code.
+# Workaround for rustc + MSVC codegen crashes at opt-level=3 (seen as
+# STATUS_ACCESS_VIOLATION and STATUS_STACK_BUFFER_OVERRUN during release
+# builds). We hit this on the spaceshop-companion lib first (rustc 1.95),
+# then again deterministically on the upstream `tauri` crate itself when
+# building v0.6.0 with rustc 1.94. Same workaround works in both places:
+# drop the crate's opt-level to 1 so rustc skips the LLVM pass that
+# crashes. Runtime perf cost is imperceptible for a Tauri GUI app —
+# there's no hot loop in our code or in tauri-core.
 [profile.release.package.spaceshop-companion]
 opt-level = 1
+
+[profile.release.package.tauri]
+opt-level = 1
+codegen-units = 1
 
 [dependencies]
 tauri = { version = "2.11", features = ["tray-icon", "image-png"] }

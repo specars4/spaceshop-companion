@@ -1744,6 +1744,75 @@ pub async fn p4_list_changes<R: tauri::Runtime>(
     list_changes(&cfg, &workspace, &root).await
 }
 
+/// v0.6.5 — operator-triggered "Scan for new/changed files" button on
+/// the Changes page. Runs `p4 -c <ws> reconcile //...` (NOT -n, this
+/// actually opens files) so that files added on disk outside Unreal's
+/// auto-add path (e.g. dragged into `sharedassets/` via Windows
+/// Explorer) become visible in the Changes list via `p4 opened`.
+///
+/// Returns the count of files that were freshly opened. The frontend
+/// re-runs `list_changes` after this to refresh the visible list —
+/// the new files appear in the next render.
+///
+/// Timeout: `ADOPT_RECONCILE_TIMEOUT` (10 min). `p4 reconcile //...`
+/// walks every file in the workspace comparing disk vs depot — on a
+/// 8000-file Unreal workspace this takes 30-60s, similar shape to
+/// `change_counts`'s pre-v0.6.3 cost. The 10-minute cap is generous
+/// enough that the operator sees a real "no changes found" message
+/// rather than a confusing timeout.
+#[tauri::command]
+pub async fn p4_reconcile_workspace<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    project_id: String,
+) -> Result<u32, CompanionError> {
+    let (cfg, workspace, root) = project_config(&app, &project_id)?;
+    reconcile_workspace(&cfg, &workspace, &root).await
+}
+
+/// Helper for `p4_reconcile_workspace`. Separated from the Tauri
+/// command so it's testable via direct call.
+pub async fn reconcile_workspace(
+    config: &P4Config,
+    workspace: &str,
+    workspace_root: &Path,
+) -> Result<u32, CompanionError> {
+    verify_workspace_root_exists(workspace_root)?;
+    let (stdout, stderr, code) = run_p4(
+        config,
+        &["-c", workspace, "reconcile", "//..."],
+        None,
+        Some(workspace_root),
+        ADOPT_RECONCILE_TIMEOUT,
+    )
+    .await?;
+
+    // Benign empty case — exit 1 + "no file(s) to reconcile" in stderr
+    // means the workspace already matches depot. Not an error.
+    if code != 0 {
+        let stderr_lc = stderr.to_lowercase();
+        if stderr_lc.contains("no file(s) to reconcile") {
+            return Ok(0);
+        }
+        return Err(CompanionError::Perforce(if !stderr.trim().is_empty() {
+            stderr
+        } else {
+            stdout
+        }));
+    }
+
+    // p4 reconcile output is one line per opened file:
+    //   //depot/path/foo.uasset#1 - opened for add
+    //   //depot/path/bar.png#2 - opened for edit
+    //   //depot/path/baz.txt#3 - opened for delete
+    // Count any line containing " - opened for ".
+    let opened_count: u32 = stdout
+        .lines()
+        .filter(|l| l.contains(" - opened for "))
+        .count() as u32;
+
+    Ok(opened_count)
+}
+
 #[tauri::command]
 pub async fn p4_change_counts<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,

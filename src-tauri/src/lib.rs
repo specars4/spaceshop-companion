@@ -143,6 +143,7 @@ pub fn run() {
             commands::perforce::p4_probe,
             commands::perforce::p4_list_changes,
             commands::perforce::p4_change_counts,
+            commands::perforce::p4_reconcile_workspace,
             commands::perforce::p4_submit_changes,
             commands::perforce::p4_restore_file,
             commands::perforce::p4_pull_latest,

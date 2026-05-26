@@ -14,6 +14,45 @@ Most-recent first.
 
 ---
 
+## Session 8 — 2026-05-26 — v0.6.5 (Scan for new/changed files button)
+
+**Outcome:** Companion's Changes (Review & Submit) page now has a
+"Scan for files" button that runs `p4 reconcile //...` on demand,
+opening any disk file that differs from depot for the appropriate
+action (add/edit/delete). Closes the v0.6.4 caveat: files dragged
+into the workspace folder via Windows Explorer (e.g. dropped into
+`sharedassets/`) weren't visible in Review & Submit because they
+weren't in `p4 opened`. With this button the operator can scan,
+let `p4 reconcile` open everything, then re-render the change list.
+
+### v0.6.5 changes
+
+- **`perforce.rs::reconcile_workspace`** — new public fn. Runs
+  `p4 -c <ws> reconcile //...` (NOT `-n`, this actually opens files)
+  with `ADOPT_RECONCILE_TIMEOUT = 10 min`. Returns the count of
+  files opened. Handles the benign "no file(s) to reconcile" case
+  (exit 1 + stderr message) as `Ok(0)` rather than error.
+- **`perforce.rs::p4_reconcile_workspace`** — Tauri command wrapper.
+- **`lib.rs`** — registered the new command.
+- **`src/lib/invoke.ts::reconcileWorkspace`** — TS wrapper.
+- **`src/pages/Changes.tsx`** — added a top-of-page "Missing a file
+  you added outside Unreal?" call-to-action card with a "Scan for
+  files" button. Separate `scanning` state from `loading` so the
+  existing change list stays visible while the 30-60s scan runs.
+  On success: surface "Opened N file(s)…" or "No new or changed
+  files found…" in a gold-bordered notice, then re-fetch
+  `listChanges` so the new files appear in the list.
+
+### UX note
+
+The button is intentionally framed as opt-in ("opt in to the slow
+scan when you suspect Unreal missed something") rather than always-on.
+A passive every-time reconcile on page load would have made the
+Review & Submit page take 30-60s to render — worse UX than the
+v0.6.4 "fast but blind to unmanaged files" trade-off.
+
+---
+
 ## Session 7 — 2026-05-26 — v0.6.4 (list_changes uses `p4 opened`, fixes Review-and-Submit "no local changes" lie)
 
 **Outcome:** Companion's "Review & Submit" page now actually shows

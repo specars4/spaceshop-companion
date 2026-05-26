@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   listChanges,
+  reconcileWorkspace,
   restoreFile,
   revealInExplorer,
   submitChanges,
@@ -25,6 +26,11 @@ export function Changes({ project, onBack, onSubmitted }: Props) {
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  // v0.6.5 — Scan-for-new-files button. Separate spinner from `loading`
+  // so we can keep the existing change list visible while the scan
+  // runs (which can take 30-60s on big workspaces).
+  const [scanning, setScanning] = useState(false);
+  const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [openMenuFor, setOpenMenuFor] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -115,6 +121,42 @@ export function Changes({ project, onBack, onSubmitted }: Props) {
     }
   }
 
+  // v0.6.5 — "Scan for new/changed files" button handler. Runs
+  // `p4 reconcile //...` server-side, which OPENS files for add/edit/
+  // delete based on disk-vs-depot comparison. The list then re-renders
+  // through `listChanges`'s `p4 opened` query.
+  //
+  // The Unreal Editor's source-control plugin already auto-runs
+  // `p4 edit` on checkout and `p4 add` on new assets in `Content/`,
+  // so this button is mostly for files Unreal doesn't see: assets
+  // dragged into `sharedassets/` via Windows Explorer, manual notepad
+  // edits to `Config/Default*.ini`, etc.
+  async function handleScan() {
+    setScanning(true);
+    setScanMessage(null);
+    setErrorMessage(null);
+    try {
+      const opened = await reconcileWorkspace(project.project_id);
+      if (opened === 0) {
+        setScanMessage(
+          "No new or changed files found outside what's already tracked.",
+        );
+      } else {
+        setScanMessage(
+          `Opened ${opened} file${opened === 1 ? "" : "s"} for add / edit / delete.`,
+        );
+      }
+      await refresh();
+    } catch (err) {
+      const e = err as { body?: string; title?: string };
+      setErrorMessage(
+        e?.body ?? e?.title ?? "Could not scan for unmanaged files.",
+      );
+    } finally {
+      setScanning(false);
+    }
+  }
+
   async function handleRestore(localPath: string) {
     setOpenMenuFor(null);
     try {
@@ -166,6 +208,56 @@ export function Changes({ project, onBack, onSubmitted }: Props) {
           }}
         >
           {errorMessage}
+        </div>
+      )}
+
+      {/* v0.6.5 — Scan-for-unmanaged-files action row. Sits above the
+          change-table so it's visible even when there are zero current
+          changes. The neutral tone reflects that it's an opt-in cost
+          (takes 30-60s on big workspaces) rather than a default action. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 14,
+          padding: "10px 12px",
+          border: "1px solid var(--warm-gray)",
+          borderRadius: "var(--radius-s)",
+          background: "rgba(212, 180, 122, 0.04)",
+        }}
+      >
+        <div style={{ flex: 1, fontSize: 12, color: "var(--cream-dim)" }}>
+          <strong style={{ color: "var(--cream)" }}>
+            Missing a file you added outside Unreal?
+          </strong>{" "}
+          Click <em>Scan</em> to find files dragged into the project folder
+          (e.g. into <code>sharedassets/</code>) that aren't yet tracked.
+          Takes about 30-60 seconds on a large project.
+        </div>
+        <button
+          className="row-act"
+          onClick={handleScan}
+          disabled={scanning || loading || submitting}
+          style={{ minWidth: 130 }}
+        >
+          {scanning ? "Scanning…" : "Scan for files"}
+        </button>
+      </div>
+
+      {scanMessage && (
+        <div
+          style={{
+            border: "1px solid var(--gold)",
+            background: "rgba(212, 180, 122, 0.10)",
+            padding: "10px 14px",
+            borderRadius: "var(--radius-s)",
+            fontSize: 12,
+            color: "var(--cream)",
+            marginBottom: 14,
+          }}
+        >
+          {scanMessage}
         </div>
       )}
 

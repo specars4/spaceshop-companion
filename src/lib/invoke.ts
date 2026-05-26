@@ -44,6 +44,18 @@ export async function changeCounts(projectId: string): Promise<ChangeCounts> {
   return invoke<ChangeCounts>("p4_change_counts", { projectId });
 }
 
+/**
+ * v0.6.5 — "Scan for new/changed files" button. Runs `p4 reconcile //...`
+ * server-side, opening any disk file that differs from depot for the
+ * appropriate action (add / edit / delete). Slow on big workspaces
+ * (30-60s on a real Unreal project) — caller should show a spinner.
+ * Returns the number of files freshly opened. Caller should re-run
+ * `listChanges` after this to refresh the visible list.
+ */
+export async function reconcileWorkspace(projectId: string): Promise<number> {
+  return invoke<number>("p4_reconcile_workspace", { projectId });
+}
+
 export async function submitChanges(
   projectId: string,
   files: string[],

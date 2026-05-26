@@ -538,6 +538,163 @@ where
     force_resync(config, workspace, workspace_root, on_progress).await
 }
 
+/// Outcome summary of an adopt-in-place onboarding. Returned to the
+/// caller so the UI can surface a meaningful "you have N pending
+/// changes" message when local state diverges from depot.
+#[derive(Debug, Clone, Default)]
+pub struct AdoptOutcome {
+    /// Files counted in the have-table after `p4 sync -k`. Equals the
+    /// total file count of the workspace at the pinned revision —
+    /// useful for the persisted project record's `last_sync_files`.
+    pub have_table_files: u32,
+
+    /// Number of files where local disk content differs from depot
+    /// (modified, missing, or extra). Zero means perfect adoption.
+    /// Non-zero is NOT an error — it represents legitimate pending
+    /// work the operator did between MIGRATE and self-onboard, or
+    /// stale workspace content if adopt_at_cl < depot HEAD.
+    pub reconcile_diff_count: u32,
+}
+
+/// Adopt-in-place onboarding for workspaces where the files are
+/// ALREADY ON DISK at `workspace_root` (typical: arsen self-onboarding
+/// a project Workshop just migrated). Replaces force_resync's
+/// destructive flush+sync with a have-table-only update + reconcile
+/// audit:
+///
+///   1. `p4 sync -k //...[@N]` — tells the server "I have all these
+///      files at revision N (or HEAD if `at_cl=None`)." Pure metadata
+///      update, NO file transfer. Completes in seconds even for 50GB
+///      workspaces.
+///
+///   2. `p4 reconcile -n //...` — preview-only audit of what would be
+///      opened-for-add/edit/delete if the operator submitted now.
+///      Returns the count so the UI can decide whether to surface a
+///      "X pending changes detected during adoption" notice.
+///
+/// Pre-flight: verifies the workspace root exists AND is non-empty.
+/// An empty root means the adopt-existing claim is unsupported by
+/// reality — caller should fall back to initial_sync.
+///
+/// Streams no progress (both ops are fast metadata calls), but emits
+/// a single "adoption complete" progress line through `on_progress`
+/// so the frontend's step-status UI has something to display.
+pub async fn adopt_in_place<F>(
+    config: &P4Config,
+    workspace: &str,
+    workspace_root: &Path,
+    at_cl: Option<u32>,
+    mut on_progress: F,
+) -> Result<AdoptOutcome, CompanionError>
+where
+    F: FnMut(&str),
+{
+    verify_workspace_root_exists(workspace_root)?;
+
+    // Defensive — if the root is empty, adoption is a lie. Caller (in
+    // onboarding.rs) is expected to short-circuit to initial_sync
+    // BEFORE getting here, but double-check so a malformed self-onboard
+    // invite doesn't silently produce a workspace claiming "all 8000
+    // files at HEAD" when the disk is empty.
+    let has_content = std::fs::read_dir(workspace_root)
+        .map_err(|e| {
+            CompanionError::Perforce(format!(
+                "could not read workspace root '{}': {e}",
+                workspace_root.display()
+            ))
+        })?
+        .next()
+        .is_some();
+    if !has_content {
+        return Err(CompanionError::Perforce(format!(
+            "adopt-in-place was invoked but workspace root '{}' is empty. \
+             Either the invite is mis-targeted, or fall back to initial_sync.",
+            workspace_root.display()
+        )));
+    }
+
+    // Heal workspace stream binding (mirrors force_resync — newer Workshop
+    // builds always bind, older specs in the wild may not).
+    let _ = ensure_workspace_stream_bound(config, workspace).await;
+
+    // ----- Step 1: p4 sync -k //...[@N] -----
+    //
+    // -k = update have-table only, NO file transfer.
+    // @N = pin to a specific changelist if provided; default is HEAD.
+    //
+    // Per-file stdout lines look like:
+    //   //depot/path/file.uasset#1 - updating //ws/path/file.uasset
+    // We count these as `have_table_files`.
+    on_progress("Updating have-table from local disk state…");
+    let sync_target = match at_cl {
+        Some(n) => format!("//...@{n}"),
+        None => "//...".to_string(),
+    };
+    let (stdout, stderr, code) = run_p4(
+        config,
+        &["-c", workspace, "sync", "-k", &sync_target],
+        None,
+        Some(workspace_root),
+        CALL_TIMEOUT,
+    )
+    .await?;
+    // `p4 sync -k` exit 1 + stderr "file(s) up-to-date" is the benign
+    // "nothing changed" case (the workspace's have-table was already
+    // at this revision — re-running adoption). Any other non-zero
+    // exit is a real failure.
+    if code != 0 && !stderr.contains("up-to-date") {
+        return Err(CompanionError::Perforce(format!(
+            "p4 sync -k failed (exit {code}): {}",
+            stderr.trim()
+        )));
+    }
+    let have_table_files: u32 = stdout
+        .lines()
+        .filter(|line| line.contains(" - updating ") || line.contains(" - added as "))
+        .count() as u32;
+
+    // ----- Step 2: p4 reconcile -n //... -----
+    //
+    // -n = preview only, do NOT open files. Lists files where disk
+    // content diverges from depot HEAD. Three flavors:
+    //
+    //   //depot/path/x#1 - reconcile (add/edit/delete) //ws/path/x
+    //
+    // We just count divergences; the frontend decides whether to
+    // surface a "your local copy differs from depot" notice.
+    on_progress("Auditing local disk vs depot HEAD…");
+    let (rstdout, rstderr, rcode) = run_p4(
+        config,
+        &["-c", workspace, "reconcile", "-n", "//..."],
+        None,
+        Some(workspace_root),
+        CALL_TIMEOUT,
+    )
+    .await?;
+    // Reconcile exit 1 + stderr "no file(s) to reconcile" is the
+    // happy path (perfect adoption). Anything else non-zero is real.
+    if rcode != 0 && !rstderr.contains("no file(s) to reconcile") {
+        return Err(CompanionError::Perforce(format!(
+            "p4 reconcile -n failed (exit {rcode}): {}",
+            rstderr.trim()
+        )));
+    }
+    let reconcile_diff_count: u32 = rstdout
+        .lines()
+        .filter(|line| line.contains(" - reconcile "))
+        .count() as u32;
+
+    on_progress(&format!(
+        "Adoption complete — {have_table_files} files registered, \
+         {reconcile_diff_count} divergences from depot."
+    ));
+
+    Ok(AdoptOutcome {
+        have_table_files,
+        reconcile_diff_count,
+    })
+}
+
 /// `p4 sync //...` — daily Pull Latest. Unlike `initial_sync` this does
 /// NOT pass `-f`, so files with pending local edits are left alone
 /// (Perforce will yell about them via stderr) and unchanged files are

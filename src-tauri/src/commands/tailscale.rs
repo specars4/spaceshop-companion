@@ -74,6 +74,16 @@ async fn run_tailscale(
 /// from a clean state regardless of prior config. `--accept-routes` lets
 /// the contractor reach the NAS's subnet-routed ranges if Arsen later
 /// enables them.
+///
+/// **Empty auth_key short-circuit (v0.6.1):** when the invite supplied
+/// no auth_key (e.g. a SELF-ONBOARD INVITE from Workshop where the
+/// admin's machine is already on the tailnet under their personal
+/// account), running `tailscale up --auth-key=""` would error. Instead
+/// we probe `tailscale status` first: if backend_state reports an
+/// already-joined node (Running / Started / Connected) we return that
+/// status without invoking `up` — there's nothing to do. If empty
+/// auth_key + status is anything else (NeedsLogin, Stopped, NotInstalled)
+/// we surface a clear error telling the operator to supply a real key.
 pub async fn up<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     auth_key: &str,
@@ -84,6 +94,26 @@ pub async fn up<R: tauri::Runtime>(
         return Err(CompanionError::Tailscale(format!(
             "tailscale.exe missing from bundled binaries: {}",
             exe.display()
+        )));
+    }
+
+    if auth_key.is_empty() {
+        // No fresh-join requested — caller is asserting "I'm already on
+        // the tailnet under my own account." Validate and pass through.
+        let current = status(app).await?;
+        let joined = matches!(
+            current.backend_state.as_str(),
+            "Running" | "Started" | "Connected",
+        );
+        if joined {
+            return Ok(current);
+        }
+        return Err(CompanionError::Tailscale(format!(
+            "Invite has no Tailscale auth key but this device is not \
+             joined to a tailnet (state: {}). Supply a real auth key \
+             in the invite, or run `tailscale up` once manually \
+             before applying this invite.",
+            current.backend_state,
         )));
     }
 

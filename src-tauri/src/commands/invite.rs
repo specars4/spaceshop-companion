@@ -25,6 +25,24 @@ pub struct InviteData {
     pub issued_by: String,
     pub perforce: PerforceSection,
     pub tailscale: TailscaleSection,
+
+    /// Adoption hint introduced in Companion v0.6.2 — when true,
+    /// Workshop is telling us the workspace at `local_root_default`
+    /// is already populated on disk (typical: arsen self-onboarding
+    /// a project Workshop just migrated). We branch to the
+    /// adopt-in-place path (`p4 sync -k` + `reconcile -n`) instead
+    /// of the contractor-default force_resync. Missing or false
+    /// preserves the pre-v0.6.2 contractor-onboard behavior.
+    #[serde(default)]
+    pub adopt_existing: Option<bool>,
+
+    /// Companion v0.6.2 — when `adopt_existing == Some(true)`, this
+    /// pins the changelist the local files actually represent so the
+    /// have-table update is truth-aware: `p4 sync -k //...@N`.
+    /// Missing means "pin to HEAD", which is safe immediately
+    /// post-migration but not for stale re-onboards.
+    #[serde(default)]
+    pub adopt_at_cl: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

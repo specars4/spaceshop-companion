@@ -33,6 +33,21 @@ pub struct Project {
     pub ticket: String,
     pub last_sync_at: Option<String>,
     pub last_sync_files: Option<u32>,
+    /// Invite-suggested workspace root (`%USERPROFILE%`-expanded) at
+    /// the moment of onboarding. The operator's chosen
+    /// `workspace_root` may differ if they picked another folder in
+    /// the onboarding wizard. Preserved separately so a future
+    /// "verify workspace integrity" surface can flag drift (especially
+    /// important for SELF-ONBOARD INVITE flow where the depot
+    /// already has a workspace bound to the invite's
+    /// `local_root_default`).
+    ///
+    /// `#[serde(default)]` so projects persisted by v0.6.0 and
+    /// earlier (which had no `invite_local_root_default` field) load
+    /// without migration — the field defaults to an empty string,
+    /// matching "we don't know what the invite suggested."
+    #[serde(default)]
+    pub invite_local_root_default: String,
 }
 
 impl Project {
@@ -49,7 +64,32 @@ impl Project {
             ticket: invite.perforce.ticket.clone(),
             last_sync_at: None,
             last_sync_files: None,
+            invite_local_root_default: invite.perforce.local_root_default.clone(),
         }
+    }
+
+    /// True when the operator's chosen `workspace_root` differs from
+    /// the invite's suggested `local_root_default`. Used by future
+    /// "verify integrity" diagnostics + the SELF-ONBOARD drift warning.
+    /// Returns false when `invite_local_root_default` is empty
+    /// (legacy projects from v0.6.0 and earlier).
+    ///
+    /// `#[allow(dead_code)]`: not currently called from any command,
+    /// but kept as the canonical drift-detection helper so a future
+    /// "verify integrity" surface (planned for the admin tab) can
+    /// import it instead of re-deriving the comparison. Removing it
+    /// would force the next consumer to re-write the same logic and
+    /// risk drift between Confirm.tsx's heuristic and the Rust check.
+    #[allow(dead_code)]
+    pub fn root_diverges_from_invite(&self) -> bool {
+        if self.invite_local_root_default.is_empty() {
+            return false;
+        }
+        // Naive string-compare is fine — both sides go through the
+        // same `%USERPROFILE%` expansion at construction time. A
+        // future PathBuf canonicalize() pass would catch case + tilde
+        // variations, but that's an over-fit for v0.6.x.
+        self.workspace_root != self.invite_local_root_default
     }
 }
 

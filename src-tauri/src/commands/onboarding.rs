@@ -179,39 +179,109 @@ pub async fn apply_invite<R: Runtime>(
         Some(invite.perforce.workspace_template.name.clone()),
     );
 
-    // ----- 7. Initial sync -----
+    // ----- 7. Sync — adopt-in-place OR fresh download -----
+    //
+    // Companion v0.6.2: an invite can carry `adopt_existing: true`
+    // (Workshop's SELF-ONBOARD INVITE button) which tells us the
+    // workspace files are ALREADY on disk at `workspace_root`. In that
+    // case we MUST NOT run initial_sync — it flushes the have-table
+    // and re-downloads everything, which for a 50GB Unreal project at
+    // 100 Mbps means an hour-plus of needless transfer.
+    //
+    // Decision matrix:
+    //   adopt_existing == false  → initial_sync (fresh download — the
+    //                              contractor-onboard default that
+    //                              predates v0.6.2)
+    //   adopt_existing == true, root empty → fall back to initial_sync
+    //     (the invite said adopt but the folder is bare — operator
+    //     likely picked a different folder in CHOOSE FOLDER)
+    //   adopt_existing == true, root has files → adopt_in_place
+    //     (sync -k + reconcile -n, ~30s, no file transfer)
     step(&app, "sync", "running", None);
     let app_for_progress = app.clone();
-    let files = match perforce::initial_sync(
-        &cfg,
-        &invite.perforce.workspace_template.name,
-        root,
-        |line| {
-            // Approximate progress by counting lines streamed.
-            // (We don't have a total upfront from p4.)
+    let adopt_existing = invite.adopt_existing.unwrap_or(false);
+    let root_has_content = std::fs::read_dir(root)
+        .map(|mut it| it.next().is_some())
+        .unwrap_or(false);
+
+    let (files, sync_detail) = if adopt_existing && root_has_content {
+        // Adopt-in-place — have-table update + reconcile audit, no transfer.
+        let app_for_adopt = app_for_progress.clone();
+        match perforce::adopt_in_place(
+            &cfg,
+            &invite.perforce.workspace_template.name,
+            root,
+            invite.adopt_at_cl,
+            |line| {
+                let _ = app_for_adopt.emit(
+                    EVENT_NAME,
+                    OnboardingEvent::SyncProgress {
+                        line: line.into(),
+                        files_so_far: 0,
+                    },
+                );
+            },
+        )
+        .await
+        {
+            Ok(outcome) => {
+                let detail = if outcome.reconcile_diff_count == 0 {
+                    format!(
+                        "Adopted {} files — workspace matches depot",
+                        outcome.have_table_files
+                    )
+                } else {
+                    format!(
+                        "Adopted {} files — {} pending changes detected (review in Companion)",
+                        outcome.have_table_files, outcome.reconcile_diff_count
+                    )
+                };
+                (outcome.have_table_files, detail)
+            }
+            Err(e) => {
+                fail(&app, "sync", &e);
+                return Err(e);
+            }
+        }
+    } else {
+        // Fresh download — contractor onboard, or self-onboard fallback
+        // when the chosen folder is empty.
+        if adopt_existing && !root_has_content {
+            // Soft-notify operator: we ignored the adopt flag because
+            // the folder is bare. UI step text reflects this.
             let _ = app_for_progress.emit(
                 EVENT_NAME,
                 OnboardingEvent::SyncProgress {
-                    line: line.into(),
+                    line: "(adopt flag ignored — chosen folder is empty; running fresh sync)"
+                        .into(),
                     files_so_far: 0,
                 },
             );
-        },
-    )
-    .await
-    {
-        Ok(n) => n,
-        Err(e) => {
-            fail(&app, "sync", &e);
-            return Err(e);
+        }
+        match perforce::initial_sync(
+            &cfg,
+            &invite.perforce.workspace_template.name,
+            root,
+            |line| {
+                let _ = app_for_progress.emit(
+                    EVENT_NAME,
+                    OnboardingEvent::SyncProgress {
+                        line: line.into(),
+                        files_so_far: 0,
+                    },
+                );
+            },
+        )
+        .await
+        {
+            Ok(n) => (n, format!("Pulled {} files", n)),
+            Err(e) => {
+                fail(&app, "sync", &e);
+                return Err(e);
+            }
         }
     };
-    step(
-        &app,
-        "sync",
-        "done",
-        Some(format!("Pulled {} files", files)),
-    );
+    step(&app, "sync", "done", Some(sync_detail));
 
     // ----- 8. Persist project record -----
     let mut project = Project::from_invite(&invite, workspace_root.clone());

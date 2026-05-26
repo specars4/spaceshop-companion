@@ -31,6 +31,20 @@ export function Confirm({ invite, onCancel, onConnect }: Props) {
     setFolder(invite.perforce.local_root_default);
   }, [invite]);
 
+  // SELF-ONBOARD heuristic: an invite whose `tailscale.auth_key` is
+  // empty was minted by Workshop's SELF-ONBOARD INVITE flow, which
+  // means the workspace + folder already exist server-side and
+  // changing the folder here will cause Companion to either fight
+  // the existing workspace's Root: or no-op-sync into the wrong
+  // place. Warn (don't block) so the operator can override
+  // intentionally for non-standard layouts.
+  const isSelfOnboardShape = invite.tailscale.auth_key.trim() === "";
+  const folderDiffersFromInvite =
+    folder.trim() !== "" &&
+    folder.trim() !== invite.perforce.local_root_default.trim();
+  const showSelfOnboardDriftWarning =
+    isSelfOnboardShape && folderDiffersFromInvite;
+
   async function pickFolder() {
     const picked = await openDialog({
       directory: true,
@@ -66,6 +80,33 @@ export function Confirm({ invite, onCancel, onConnect }: Props) {
             Choose folder…
           </button>
         </div>
+        {showSelfOnboardDriftWarning && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: "10px 12px",
+              border: "1px solid var(--gold)",
+              borderRadius: 4,
+              background: "rgba(212, 180, 122, 0.08)",
+              fontSize: 12,
+              color: "var(--cream)",
+              lineHeight: 1.5,
+            }}
+          >
+            <strong style={{ color: "var(--gold)" }}>
+              Folder differs from invite default.
+            </strong>{" "}
+            This looks like a SELF-ONBOARD invite (no Tailscale auth
+            key — your machine is already on the tailnet). The
+            workspace + folder above already exist on the Perforce
+            server. Pointing Companion at a different folder will
+            either rewrite the existing workspace's Root: or sync into
+            the wrong place. If your workspace was set up by Workshop's
+            MIGRATE TO PERFORCE on the suggested folder, leave the
+            field as-is. Override only if your layout differs from
+            what Workshop expected.
+          </div>
+        )}
       </div>
 
       <div className="section-label">W H A T &nbsp; H A P P E N S &nbsp; N E X T</div>

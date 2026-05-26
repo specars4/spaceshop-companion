@@ -70,13 +70,24 @@ impl FriendlyError {
     }
 }
 
+// Canonical auth-error phrase set — MUST match
+// `tools/perforce/p4_client.py::_AUTH_ERROR_PHRASES` in the SPACESHOP
+// TOOLS repo. Any phrase that classifies as P4AuthError on the
+// Workshop side must classify the same way here, or a real p4d auth
+// message produces "ask for a new invite" guidance in Companion while
+// Workshop silently auto-relogs in. Drift cost: contractor wasted
+// round-trip discovering the mismatch.
+//
+// The previous catch-all `"perforce password"` was dropped because it
+// over-matched (e.g. would catch "Perforce password reset
+// successfully" — a benign info message). Phrases now mirror the
+// SPACESHOP TOOLS canonical list verbatim, lowercase.
 const AUTH_PHRASES: &[&str] = &[
-    "password (p4passwd) invalid",
+    "perforce password (p4passwd) invalid or unset",
     "your session has expired",
     "user without password",
     "password not set",
-    "password must be reset",
-    "perforce password",
+    "must be reset",
 ];
 
 const CONNECT_PHRASES: &[&str] = &[

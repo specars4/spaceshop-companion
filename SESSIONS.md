@@ -14,6 +14,70 @@ Most-recent first.
 
 ---
 
+## Session 4 — 2026-05-25 — v0.6.1 (SELF-ONBOARD support + audit-followup hardening + AGENTS.md)
+
+**Outcome:** v0.6.1 bundles four changes that ship as one release: the
+empty-auth-key short-circuit needed for Workshop's new SELF-ONBOARD
+INVITE flow, plus three MEDIUM-severity fixes flagged by the Session
+59 Unreal+Perforce expert audit, plus the new Companion AGENTS.md so
+future agents don't start conventions-blind.
+
+### v0.6.1 changes
+
+- **`src-tauri/src/commands/tailscale.rs::up`** — when `auth_key.is_empty()`,
+  probe `status()` first. If joined (state Running / Started /
+  Connected): return the current status as Ok without invoking
+  `tailscale up --auth-key=""` (which errors). If not joined:
+  surface a clear `CompanionError::Tailscale` telling the operator to
+  supply a real key. Workshop's SELF-ONBOARD INVITE generator emits
+  invites with `tailscale.auth_key = ""` because the admin's machine
+  is already on the tailnet under their personal Tailscale account;
+  pairing a fresh contractor auth key (`tag:contractor`) onto
+  arsen's machine would be ACL-wrong.
+
+- **`src-tauri/src/commands/errors.rs::AUTH_PHRASES`** — normalized
+  to mirror `tools/perforce/p4_client.py::_AUTH_ERROR_PHRASES` in
+  SPACESHOP TOOLS verbatim. Dropped the over-matching catch-all
+  `"perforce password"` that would've classified benign info
+  messages as auth errors. Inline comment points at the canonical
+  source as the single source of truth for cross-repo lockstep.
+
+- **`src-tauri/src/commands/projects.rs::Project`** — new
+  `invite_local_root_default: String` field (`#[serde(default)]` for
+  v0.6.0 back-compat). `from_invite` persists the invite's
+  suggested root. New `root_diverges_from_invite()` helper
+  (`#[allow(dead_code)]` for the future "verify integrity" admin
+  surface) returns whether the operator's chosen `workspace_root`
+  differs from the invite's default. Important for SELF-ONBOARD,
+  where the depot already has a workspace bound to the invite's
+  `local_root_default` and pointing Companion at a different folder
+  silently breaks the no-file-transfer promise.
+
+- **`src/pages/Confirm.tsx`** — gold-bordered drift warning banner
+  shown when the operator-entered folder differs from the invite's
+  default AND the invite is SELF-ONBOARD-shaped (empty
+  `tailscale.auth_key`). Warns, doesn't block — operator can still
+  override for non-standard layouts.
+
+- **NEW `AGENTS.md`** at repo root — Companion-specific conventions
+  (invite v=1 lock, p4tickets.txt write pattern, AUTH_PHRASES
+  cross-repo lockstep, Tailscale MSI 1619 + empty-auth-key
+  short-circuit, force_resync vs daily-Pull, FriendlyError pattern,
+  version-bump 3-location lockstep, `#[serde(default)]` back-compat
+  rule, audit/fix-pipeline conventions inherited from SPACESHOP
+  TOOLS, light-vs-heavy pair-pattern scaling). Cross-links to
+  SPACESHOP TOOLS AGENTS.md for shared rules.
+
+**Backups:** `.scratch/audit_2026_05/backups/companion_empty_authkey/`
++ `auth_phrases_align/` + `companion_v0_6_1/` in the SPACESHOP TOOLS
+repo (these patches were written from the SPACESHOP TOOLS session;
+restore.py paths point into the Companion repo via `../spaceshop-companion/...`).
+
+**Build:** Built + published v0.6.1 from this session via
+`tools/perforce/build_companion.ps1 -Publish`.
+
+---
+
 ## Session 3 — 2026-05-22 — marathon v0.5.4 → v0.6.0 + agent-orchestrated build process
 
 **Outcome:** Started the session on v0.5.3 (signed, published, working).

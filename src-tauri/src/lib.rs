@@ -1,10 +1,28 @@
 mod commands;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_notification::NotificationExt;
 use tracing::{info, warn};
+
+/// v0.6.6 — "Companion minimized to tray" notification gate.
+///
+/// Companion's window-close behavior (per `on_window_event` below) is
+/// "hide to tray, don't quit." That's the right default for a daily-
+/// ops app that needs to surface tray-status updates while idle —
+/// but it has bitten the operator at least once: they clicked X to
+/// close Companion, didn't realize it was still polling p4 from the
+/// tray, and were puzzled why Unreal stayed slow. We add a one-shot
+/// per-process OS notification on first close to make the behavior
+/// visible without nagging on every subsequent close.
+///
+/// `AtomicBool` is process-lifetime — restarting Companion re-arms
+/// the notification, which we accept as a feature: each session's
+/// first close re-reminds the operator that closing != quitting.
+static FIRST_CLOSE_NOTIFIED: AtomicBool = AtomicBool::new(false);
 
 use commands::projects::ProjectState;
 use commands::tray_poll::{build_initial_tray, build_tinted_icons, spawn_poll_task, TrayPollState};
@@ -123,12 +141,56 @@ pub fn run() {
 
             // Hide window-on-close (X button) — keep Companion alive in
             // the tray. Quit only via tray "Quit".
+            //
+            // v0.6.6 — fire a one-shot OS notification on the FIRST close
+            // of each process lifetime so the operator knows the tray is
+            // still active. Subsequent closes within the same process
+            // are silent (we'd nag otherwise). Restarting Companion
+            // re-arms the notification.
             if let Some(win) = app.get_webview_window("main") {
                 let w = win.clone();
+                let app_handle = app.handle().clone();
                 win.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         let _ = w.hide();
+
+                        // First-close-of-process: nudge the operator.
+                        //
+                        // v0.6.6 audit: use `compare_exchange` and ONLY
+                        // flip the gate on a successful `show()`. If
+                        // the notification API fails (Focus Assist,
+                        // missing permission, WinRT toast service
+                        // unhealthy), the gate stays false so the NEXT
+                        // close gets another chance — instead of
+                        // consuming the one-shot on a no-op.
+                        //
+                        // `Relaxed` ordering is correct: nothing else
+                        // synchronizes through this flag. Atomicity
+                        // alone is what we need, not memory-fencing.
+                        if FIRST_CLOSE_NOTIFIED
+                            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                            .is_ok()
+                        {
+                            let res = app_handle
+                                .notification()
+                                .builder()
+                                .title("Companion is still running")
+                                .body(
+                                    "Closed the window but Companion is in the system tray. \
+                                     Look for the icon near the clock (you may need to click the \
+                                     ^ to expand hidden icons) and right-click → Quit.",
+                                )
+                                .show();
+                            if let Err(e) = res {
+                                // Roll back the gate — re-arm for next
+                                // close so a Focus-Assist-disabled
+                                // notification doesn't permanently
+                                // suppress the reminder.
+                                FIRST_CLOSE_NOTIFIED.store(false, Ordering::Relaxed);
+                                warn!("Could not show close-to-tray notification: {e}");
+                            }
+                        }
                     }
                 });
             }

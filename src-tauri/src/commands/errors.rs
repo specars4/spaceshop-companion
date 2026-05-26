@@ -131,7 +131,11 @@ const UPDATE_NETWORK_PHRASES: &[&str] = &[
     "tls handshake",
     "network is unreachable",
     "no route to host",
-    "timed out",
+    // v0.6.6 audit — bare `"timed out"` REMOVED from this list.
+    // It over-matched on Perforce timeouts (`"p4 -c timed out after
+    // 30.0s"`) misclassifying them as "Couldn't reach update server."
+    // Specific cases that ARE network timeouts already match via
+    // "connection timed out" above.
 ];
 
 /// "We reached the server but couldn't trust / parse what came back."
@@ -270,9 +274,58 @@ impl CompanionError {
                 "Ask your project lead for a fresh invite code.",
                 "expires_at is in the past",
             ),
+            // v0.6.6 — p4-specific friendly mapping (must run BEFORE
+            // `translate()` because translate's UPDATE_NETWORK_PHRASES
+            // pool contains "timed out" which over-matches and
+            // mislabels p4 timeouts as "Couldn't reach update server".
+            // Operator saw exactly this during the Session 6 lock-storm:
+            // every p4 command stalled at the 30s `CALL_TIMEOUT` and
+            // the UI reported it as an update-server problem.
+            CompanionError::Perforce(msg) => p4_friendly(msg),
             _ => translate(&self.to_string()),
         }
     }
+}
+
+/// p4-specific friendly mapping. Falls through to `translate()` if no
+/// p4-shaped pattern matches.
+fn p4_friendly(raw: &str) -> FriendlyError {
+    let lc = raw.to_lowercase();
+
+    // "p4 -c timed out after 30.0s" — produced by `run_p4`'s
+    // `timeout(call_timeout, wait_with_output)` when a Perforce
+    // operation overruns its budget. The fix is NOT "check your
+    // internet" (the canonical UPDATE_NETWORK_PHRASES advice) —
+    // it's "the Perforce server is overloaded or contested." Most
+    // common cause: Unreal Editor and Companion both hammering the
+    // same workspace at the same time. v0.6.3+ should make this
+    // rare but defense in depth is cheap.
+    if lc.contains("timed out after") {
+        return FriendlyError::new(
+            "Perforce server is slow",
+            "A Perforce command took longer than expected and was canceled.",
+            "Try again in a moment. If you have other apps using Perforce (Unreal Editor's Source Control panel, p4v, terminal) running a big operation at the same time, wait for them to finish. If this keeps happening on a quiet system, contact your project lead — the server may be under load.",
+            raw,
+        );
+    }
+
+    // v0.6.6 audit — tightened the lock-contention match. The bare
+    // `"locked by"` substring was too broad (would catch any p4
+    // message that mentions the word combination); the documented p4
+    // stderr phrases for this case are `"can't be locked"` and the
+    // verbatim quote `"already locked by"`.
+    if lc.contains("can't be locked") || lc.contains("already locked by") {
+        return FriendlyError::new(
+            "File is locked by someone else",
+            "Another teammate has this file checked out exclusively.",
+            "Ask them to submit or revert their changes first, then retry.",
+            raw,
+        );
+    }
+
+    // Fall through to the generic translator for anything we don't
+    // have a p4-specific pattern for (e.g. AUTH_PHRASES, CONNECT_PHRASES).
+    translate(raw)
 }
 
 // Tauri commands return Result<T, String> by default; we serialize the

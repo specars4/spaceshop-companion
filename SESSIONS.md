@@ -14,6 +14,75 @@ Most-recent first.
 
 ---
 
+## Session 9 — 2026-05-26 — v0.6.6 (polish: close-to-tray notification, friendly p4-timeout, client -i timeout bump, error scrubs)
+
+**Outcome:** Three operator-flagged UX nuisances + three audit findings
+landed in one polish release. Notable: the headline "friendly p4
+timeout" fix was caught BROKEN by three adversarial agents before
+publish — the pattern didn't match the actual emitted error string.
+Fix shipped only after that was corrected.
+
+### v0.6.6 changes
+
+- **`lib.rs::FIRST_CLOSE_NOTIFIED`** — OS notification on first
+  process-lifetime window close, explaining the close-to-tray
+  behavior. Uses `compare_exchange` + rollback on `show()` failure
+  so a Focus-Assist-suppressed notification doesn't consume the
+  one-shot gate. `Relaxed` ordering (was `AcqRel` pre-audit).
+
+- **`errors.rs::p4_friendly`** — new p4-variant-specific friendly
+  mapping. Matches `"timed out after"` → "Perforce server is slow"
+  + concrete retry advice (UE Editor, other p4 apps). Matches
+  `"can't be locked"` / `"already locked by"` → "File is locked by
+  someone else." Falls through to existing `translate()` for
+  AUTH_PHRASES, CONNECT_PHRASES, etc.
+
+- **`errors.rs::UPDATE_NETWORK_PHRASES`** — dropped the bare
+  `"timed out"` phrase. It over-matched on Perforce timeouts and was
+  the original cause of the "Couldn't reach update server"
+  mislabel. The more-specific `"connection timed out"` is still
+  in the list and covers real network timeouts.
+
+- **`perforce.rs::run_p4`** — (a) emits the actual elapsed budget in
+  timeout errors (`"p4 {args} timed out after Ns"`) so future
+  classifiers don't have to grep for variant prefixes; (b) sets
+  `kill_on_drop(true)` on the spawned Command so a force-quit or
+  task cancellation kills the p4 child instead of orphaning it.
+
+- **`perforce.rs::CLIENT_SPEC_TIMEOUT = 120s`** — used by
+  `create_workspace` for `p4 client -i`. The 30-second
+  `CALL_TIMEOUT` was too tight under workspace lock contention
+  (Workshop pre-Session-6 polling could block `client -i` for 60+ s).
+  v0.6.3's polling fix should make contention rare; this is defense
+  in depth.
+
+- **`src/pages/Confirm.tsx`** — adopt-in-place "30 seconds, no
+  download" copy now says "usually 30 seconds, up to 2 minutes if
+  the server is busy." Truth-in-advertising for the 120s
+  `CLIENT_SPEC_TIMEOUT` worst case.
+
+### Three adversarial-agent findings caught BEFORE publish
+
+The author wrote v0.6.6's friendly-timeout pattern (`"timed out
+after"`) without sanity-checking the actual emitted string. `run_p4`
+emitted `"p4 {args} timed out"` with no `"after"` suffix — the
+pattern would never match, and the bug v0.6.6 claimed to fix would
+have shipped unfixed. Three parallel adversarial agents ALL caught
+it independently. Fix: changed `run_p4` to emit the suffix AND
+removed the bare `"timed out"` from `UPDATE_NETWORK_PHRASES` as
+defense in depth.
+
+Two other agent-flagged P2s also landed in this release:
+- `"locked by"` substring was too broad (would match benign p4 log
+  text containing those two words) — tightened to `"can't be
+  locked"` and `"already locked by"`.
+- `swap()` on the notification gate consumed the one-shot even when
+  `show()` failed — switched to `compare_exchange` + rollback so
+  Focus-Assist users get the notification next close instead of
+  losing it forever.
+
+---
+
 ## Session 8 — 2026-05-26 — v0.6.5 (Scan for new/changed files button)
 
 **Outcome:** Companion's Changes (Review & Submit) page now has a

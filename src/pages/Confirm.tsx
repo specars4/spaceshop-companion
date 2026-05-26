@@ -135,7 +135,9 @@ export function Confirm({ invite, onCancel, onConnect }: Props) {
             <>
               <li>
                 Companion registers your existing files with the server —
-                about 30 seconds, no download.
+                usually about 30 seconds, no download. Can take up to 2 minutes
+                if the server is busy or another app (like Unreal Editor) is
+                also working against the same workspace.
               </li>
               <li>
                 Companion compares the folder against the server and lists

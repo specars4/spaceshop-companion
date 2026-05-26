@@ -45,6 +45,20 @@ pub(super) static TICKET_FILE_LOCK: Mutex<()> = Mutex::new(());
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// v0.6.6 — dedicated timeout for `p4 client -i` (workspace-spec write).
+/// `client -i` is metadata-only on the server (writes a row to
+/// db.clients) and should be <100 ms on a healthy server. But it
+/// briefly holds an exclusive write lock on the client's row, and if
+/// another process is mid-status against the same workspace (e.g.
+/// Workshop's pre-Session-6 polling or any future regression of the
+/// kind), `client -i` queues behind that read lock and can take 60+ s.
+/// v0.6.3 made Companion's own polling cheap enough to not trigger
+/// this, but defense in depth is cheap and the operator's first
+/// onboarding into v0.6.2 hit this exact path. 2 minutes is generous
+/// enough to ride out any concurrent-status contention without
+/// pretending nothing's wrong forever.
+const CLIENT_SPEC_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// Wall-clock cap for the `p4 reconcile -n //...` step inside adopt_in_place.
 /// Reconcile -n walks every tracked file in the workspace and stats it
 /// against depot HEAD — on a real-world Unreal project (48 GB / 8000+
@@ -191,6 +205,15 @@ async fn run_p4(
     }
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
+    // v0.6.6 — kill the p4 child if its Tokio handle is dropped
+    // (e.g. caller cancels via timeout, or Companion is force-quit
+    // mid-call). Without this, an orphan p4.exe can outlive Companion
+    // holding file handles on workspace files — see the v0.6.6 audit
+    // findings. Cheap defense in depth; widens the worst-case from
+    // "30s orphan" to "instant orphan-on-drop kill" regardless of the
+    // call_timeout we ride out below.
+    cmd.kill_on_drop(true);
+
     let mut child = cmd
         .spawn()
         .map_err(|e| CompanionError::Perforce(format!("could not spawn p4: {e}")))?;
@@ -208,7 +231,20 @@ async fn run_p4(
 
     let output = timeout(call_timeout, child.wait_with_output())
         .await
-        .map_err(|_| CompanionError::Perforce(format!("p4 {} timed out", args.join(" "))))?
+        // v0.6.6 — include the actual elapsed budget so the message is
+        // informative AND so the substring "timed out after" can be
+        // safely matched by p4_friendly() in errors.rs. Pre-v0.6.6 the
+        // message was "p4 {args} timed out" with no suffix, which
+        // collided with translate()'s UPDATE_NETWORK_PHRASES bare
+        // "timed out" pattern and produced "Couldn't reach update
+        // server" instead of "Perforce server is slow."
+        .map_err(|_| {
+            CompanionError::Perforce(format!(
+                "p4 {} timed out after {:.0}s",
+                args.join(" "),
+                call_timeout.as_secs_f32(),
+            ))
+        })?
         .map_err(|e| CompanionError::Perforce(format!("p4 wait failed: {e}")))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -398,7 +434,7 @@ pub async fn create_workspace(
         &["client", "-i"],
         Some(&spec),
         None,
-        CALL_TIMEOUT,
+        CLIENT_SPEC_TIMEOUT,
     )
     .await?;
 

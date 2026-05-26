@@ -47,7 +47,9 @@ needs to set up the connection.
   "tailscale": {
     "auth_key":    "tskey-auth-xxx...",
     "tags":        ["tag:contractor"]
-  }
+  },
+  "adopt_existing": false,
+  "adopt_at_cl":    null
 }
 ```
 
@@ -70,6 +72,8 @@ needs to set up the connection.
 | `perforce.local_root_default` | string | yes | The local-disk path Companion offers as the default workspace root. Contractor may override during onboarding. Use `%USERPROFILE%` placeholders for Windows; Companion expands at apply time. |
 | `tailscale.auth_key` | string | yes | A single-use, pre-approved, ephemeral Tailscale auth key, tagged `tag:contractor`. Generated at https://login.tailscale.com/admin/settings/keys per invite. |
 | `tailscale.tags` | string[] | yes | Tags the contractor's device gets. **Must include `tag:contractor`** (ACL-enforced — see `tailscale_acl.json`). |
+| `adopt_existing` | bool | no (Companion v0.6.2+) | When `true`, signals that the workspace files are ALREADY on disk at `perforce.local_root_default`. Companion branches to the adopt-in-place path (`p4 sync -k` + `reconcile -n`) instead of force_resync. Workshop sets this on SELF-ONBOARD INVITE; contractor invites leave it `false`/absent. Older Companion (≤ v0.6.1) ignores it and falls back to fresh sync — safe but slow for self-onboard. |
+| `adopt_at_cl` | int \| null | no (Companion v0.6.2+) | When `adopt_existing` is true, the changelist number the local files represent. Used as `p4 sync -k //...@N` so the have-table reflects truth. `null` means "pin to HEAD" — safe immediately post-migration, wrong for stale re-onboards. |
 
 ### Encoding
 

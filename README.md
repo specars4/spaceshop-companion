@@ -5,7 +5,7 @@ contractor pastes an invite code, picks a folder, and Companion sets up
 the connection + workspace + initial download so they can open the
 project in Unreal with three copy-paste values.
 
-**Status:** v0.6.0 — Windows only, unsigned MSI, self-updating via GitHub Releases.
+**Status:** v0.6.2 — Windows only, signed MSI, self-updating via GitHub Releases.
 **Built with:** Tauri 2.x · React 19 · TypeScript 5.8
 
 ## Quick links

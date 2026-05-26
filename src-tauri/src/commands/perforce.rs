@@ -45,6 +45,17 @@ pub(super) static TICKET_FILE_LOCK: Mutex<()> = Mutex::new(());
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Wall-clock cap for the `p4 reconcile -n //...` step inside adopt_in_place.
+/// Reconcile -n walks every tracked file in the workspace and stats it
+/// against depot HEAD — on a real-world Unreal project (48 GB / 8000+
+/// files measured on VRAYLAR_Neymarc) this can take 1-3 minutes on
+/// warm disk. The 30-second CALL_TIMEOUT default is fine for sync -k
+/// (pure metadata) but too tight for reconcile -n. 10 minutes is
+/// generous enough that a real submission delay surfaces as a clean
+/// p4 error rather than a Companion-side timeout that looks broken
+/// for no obvious reason.
+const ADOPT_RECONCILE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
 /// Wall-clock cap for non-streaming long ops like `p4 submit`. Submit
 /// uploads file bytes silently with no per-file stdout, so we can't
 /// use a streaming idle signal here — a wall-clock cap is the only
@@ -648,9 +659,24 @@ where
             stderr.trim()
         )));
     }
+    // `p4 sync` per-file verbs we count toward have_table_files:
+    //   - updating   : moving the recorded revision forward
+    //   - added as   : first-time entry in the have-table (typical
+    //                  for fresh adoption from empty have-table)
+    //   - refreshing : have-table already at this rev; -k re-stamps
+    //                  it (re-running adoption produces these)
+    //   - deleted as : file was deleted in the depot at the pinned
+    //                  CL; have-table is updated to "not present"
+    // Without the latter two we'd see "Adopted 0 files" on a
+    // re-run, even though every file is correctly accounted for.
     let have_table_files: u32 = stdout
         .lines()
-        .filter(|line| line.contains(" - updating ") || line.contains(" - added as "))
+        .filter(|line| {
+            line.contains(" - updating ")
+                || line.contains(" - added as ")
+                || line.contains(" - refreshing ")
+                || line.contains(" - deleted as ")
+        })
         .count() as u32;
 
     // ----- Step 2: p4 reconcile -n //... -----
@@ -668,7 +694,7 @@ where
         &["-c", workspace, "reconcile", "-n", "//..."],
         None,
         Some(workspace_root),
-        CALL_TIMEOUT,
+        ADOPT_RECONCILE_TIMEOUT,
     )
     .await?;
     // Reconcile exit 1 + stderr "no file(s) to reconcile" is the

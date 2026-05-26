@@ -45,6 +45,14 @@ export function Confirm({ invite, onCancel, onConnect }: Props) {
   const showSelfOnboardDriftWarning =
     isSelfOnboardShape && folderDiffersFromInvite;
 
+  // v0.6.2 — drive copy adaptation off the canonical `adopt_existing`
+  // flag when present. Fall back to the empty-auth-key heuristic for
+  // invites minted by older Workshop builds (≤ Session 60 pre-v0.6.2)
+  // that didn't yet include the explicit flag.
+  const willAdoptInPlace =
+    (invite.adopt_existing === true) ||
+    (invite.adopt_existing == null && isSelfOnboardShape);
+
   async function pickFolder() {
     const picked = await openDialog({
       directory: true,
@@ -67,7 +75,9 @@ export function Confirm({ invite, onCancel, onConnect }: Props) {
       <div className="section-label">P R O J E C T &nbsp; F O L D E R</div>
       <div className="card">
         <div style={{ marginBottom: 8, fontSize: 12, color: "var(--cream-dim)" }}>
-          Your project files will be downloaded into this folder.
+          {willAdoptInPlace
+            ? "Companion will adopt the existing files in this folder — no re-download."
+            : "Your project files will be downloaded into this folder."}
         </div>
         <input
           value={folder}
@@ -121,8 +131,23 @@ export function Confirm({ invite, onCancel, onConnect }: Props) {
           }}
         >
           <li>Windows will ask for permission once. Click <strong>Yes</strong>.</li>
-          <li>Companion sets up the connection — about 2–5 minutes.</li>
-          <li>Your project files download into the folder above.</li>
+          {willAdoptInPlace ? (
+            <>
+              <li>
+                Companion registers your existing files with the server —
+                about 30 seconds, no download.
+              </li>
+              <li>
+                Companion compares the folder against the server and lists
+                any pending changes.
+              </li>
+            </>
+          ) : (
+            <>
+              <li>Companion sets up the connection — about 2–5 minutes.</li>
+              <li>Your project files download into the folder above.</li>
+            </>
+          )}
           <li>
             Companion shows you what to paste into <em>Unreal</em> so editing
             assets just works.

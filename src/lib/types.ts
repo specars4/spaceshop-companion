@@ -29,6 +29,21 @@ export interface InviteData {
   issued_by: string;
   perforce: PerforceSection;
   tailscale: TailscaleSection;
+
+  /** v0.6.2+ — when true, Workshop is telling Companion the workspace
+   *  files are ALREADY on disk at `perforce.local_root_default`. The
+   *  apply_invite flow branches to adopt-in-place (`p4 sync -k` +
+   *  `reconcile -n`) instead of force_resync. Missing or false preserves
+   *  the pre-v0.6.2 contractor-onboard behavior.
+   */
+  adopt_existing?: boolean | null;
+
+  /** v0.6.2+ — when `adopt_existing` is true, pins the changelist the
+   *  local files represent so `p4 sync -k //...@N` reflects truth.
+   *  Missing means "pin to HEAD" — safe immediately post-migration,
+   *  wrong for stale re-onboards.
+   */
+  adopt_at_cl?: number | null;
 }
 
 export interface Project {
@@ -108,5 +123,9 @@ export const STEP_LABELS: Record<OnboardingStepId, string> = {
   server: "Reaching the project server",
   ticket: "Saving your access pass",
   workspace: "Setting up your workspace",
-  sync: "Downloading your project",
+  // Generic label — covers both paths. The step "detail" string from
+  // the backend distinguishes:
+  //   contractor onboard / fresh sync → "Pulled N files"
+  //   self-onboard adopt-in-place    → "Adopted N files — …"
+  sync: "Setting up your files",
 };

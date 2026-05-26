@@ -14,6 +14,56 @@ Most-recent first.
 
 ---
 
+## Session 5 — 2026-05-26 — v0.6.2 (adopt-in-place self-onboard)
+
+**Outcome:** Workshop's SELF-ONBOARD INVITE flow now adopts an existing
+on-disk workspace instead of flushing the have-table and re-downloading.
+The catastrophic case it prevents: arsen migrates a 48 GB Unreal project
+via Workshop's MIGRATE TO PERFORCE, hits SELF-ONBOARD INVITE, pastes the
+code into Companion — and instead of ~70 min of needless re-transfer at
+the 100 Mbps line ceiling, the workspace is registered in ~30 s with the
+local-vs-depot diff surfaced as the sync step's detail string.
+
+### v0.6.2 changes
+
+- **`src-tauri/src/commands/invite.rs`** — `InviteData` gains
+  `adopt_existing: Option<bool>` + `adopt_at_cl: Option<u32>`, both
+  `#[serde(default)]`. Additive on the v=1 schema; older Companion
+  builds ignore the unknown fields and fall back to the contractor
+  fresh-sync path (safe, just slow). `docs/INVITE_FORMAT.md` mirror
+  re-synced from the canonical SPACESHOP TOOLS copy.
+- **`src-tauri/src/commands/perforce.rs::adopt_in_place`** — new public
+  fn. Runs `p4 sync -k //...[@N]` (have-table update, NO file transfer)
+  then `p4 reconcile -n //...` (preview-only audit of disk-vs-depot).
+  Returns `AdoptOutcome { have_table_files, reconcile_diff_count }`.
+  Uses a dedicated `ADOPT_RECONCILE_TIMEOUT = 10 min` for the reconcile
+  step (CALL_TIMEOUT's 30 s is too tight on 8000+ files).
+- **`src-tauri/src/commands/onboarding.rs`** — Step 7 of `apply_invite`
+  branches: when `adopt_existing == Some(true)` AND the workspace root
+  is non-empty, call `adopt_in_place` instead of `initial_sync`. Empty-
+  root edge case (operator picked a different folder in CHOOSE FOLDER)
+  → soft-notify + fall back to `initial_sync`. Sync step detail reads
+  "Adopted N files — workspace matches depot" or "Adopted N files —
+  M pending changes detected".
+- **`src/pages/Confirm.tsx`** — drives "What happens next" copy off a
+  new `willAdoptInPlace` flag (canonical `invite.adopt_existing` with
+  empty-auth-key fallback for pre-v0.6.2-Workshop invites). Adopt
+  path shows "~30 seconds, no download"; fresh-sync path keeps the
+  existing 2–5 min copy.
+- **`src/lib/types.ts`** — `InviteData` mirror gains the two new
+  optional fields; `STEP_LABELS.sync` renamed from "Downloading your
+  project" to "Setting up your files" (the step's detail string carries
+  the path-specific copy).
+- Version bumps to 0.6.2 across `Cargo.toml` / `tauri.conf.json` /
+  `package.json`. Built + published via `tools/perforce/build_companion.ps1 -Publish`.
+
+**Carryover:** the v0.6.2 commit also rolled up the uncommitted v0.6.1
+work (tailscale empty-auth-key short-circuit, errors.rs phrases parity,
+projects.rs last_sync tracking, AGENTS.md) that had shipped as binaries
+only without a git commit — per Session 4's note.
+
+---
+
 ## Session 4 — 2026-05-25 — v0.6.1 (SELF-ONBOARD support + audit-followup hardening + AGENTS.md)
 
 **Outcome:** v0.6.1 bundles four changes that ship as one release: the

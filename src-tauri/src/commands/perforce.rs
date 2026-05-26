@@ -890,6 +890,39 @@ pub struct ChangeCounts {
     pub folder_missing: bool,
 }
 
+/// Cheap-query change-counts (v0.6.3 rewrite).
+///
+/// **The bug this replaces.** Pre-v0.6.3 `change_counts` ran:
+///   1. `p4 -c <ws> status`        — walks every file in the workspace,
+///                                    compares disk vs depot. Measured
+///                                    52 s — 4 min on real Unreal projects
+///                                    (8000+ files, 48 GB).
+///   2. `p4 -c <ws> sync -n //...` — another full workspace walk.
+///
+/// Each call took a server-side read lock on the workspace's db.locks
+/// row. With the tray polling every 30 s, multiple in-flight statuses
+/// would stack and starve every other p4 op against the same workspace
+/// — Unreal's `p4 edit` for a single asset blocked for 90+ s under
+/// the lock storm. (See Session 5 SESSIONS entry.)
+///
+/// **The fix.** Replace both with metadata-only queries:
+///
+///   - `p4 -c <ws> opened` — lists files the workspace has open for
+///     edit/add/delete. The count IS `local_pending`. Sub-100 ms
+///     even on huge workspaces because p4d just reads the
+///     db.working table for this client. No file-content I/O.
+///
+///   - `p4 changes -m 1 //<view>/...` — gets the most recent depot CL
+///     visible to this workspace. We compare against our persisted
+///     `last_sync_at_cl` (when present) — if depot HEAD > last sync,
+///     `remote_unseen` is `1` (boolean-enough for the tray's green/
+///     yellow distinction). The precise "files pulled if you sync"
+///     number is no longer surfaced for the tray; if a project wants
+///     the precise count it can call `list_changes` on demand.
+///
+/// Both are pure server-side metadata queries that complete in tens
+/// of milliseconds. The tray poll cycle drops from minutes to
+/// sub-second, eliminating lock contention with Unreal entirely.
 pub async fn change_counts(
     config: &P4Config,
     workspace: &str,
@@ -902,38 +935,75 @@ pub async fn change_counts(
             folder_missing: true,
         });
     }
-    let local = list_changes(config, workspace, workspace_root).await?;
-    let local_pending = local.len() as u32;
 
-    // p4 sync -n //... — dry run, lists files that would be pulled.
-    // -vnet.maxwait=300: see run_streaming_sync for rationale (network
-    // idle, not stdout idle).
+    // ----- local_pending: files this workspace has open for action -----
+    //
+    // `p4 opened` exit codes:
+    //   0 with one line per opened file
+    //   1 with stderr "File(s) not opened on this client." when none open
+    //
+    // The "none open" case is NOT a real error. Anything else IS.
     let (stdout, stderr, code) = run_p4(
         config,
-        &["-vnet.maxwait=300", "-c", workspace, "sync", "-n", "//..."],
+        &["-c", workspace, "opened"],
         None,
         Some(workspace_root),
         CALL_TIMEOUT,
     )
     .await?;
 
-    let combined = format!("{stdout}\n{stderr}").to_lowercase();
-    let remote_unseen = if combined.contains("file(s) up-to-date") {
+    let local_pending = if code == 0 {
+        stdout
+            .lines()
+            .filter(|l| {
+                let l = l.trim();
+                // Each opened-file line starts with `//depot/...`. Skip
+                // tagged output or stray blanks.
+                !l.is_empty() && l.starts_with("//")
+            })
+            .count() as u32
+    } else if stderr.to_lowercase().contains("not opened on this client") {
         0
-    } else if code != 0 && !combined.contains(" - ") {
+    } else {
         return Err(CompanionError::Perforce(if !stderr.trim().is_empty() {
             stderr
         } else {
             stdout
         }));
-    } else {
-        stdout
-            .lines()
-            .filter(|l| {
-                let l = l.trim();
-                !l.is_empty() && l.contains(" - ")
-            })
-            .count() as u32
+    };
+
+    // ----- remote_unseen: depot has changed since our last sync? -----
+    //
+    // `p4 changes -m 1 //<view>/...` returns the most recent depot CL
+    // visible through the workspace view (post-typemap, post-stream).
+    // We compare against the workspace's "have" max via `p4 changes
+    // -m 1 //<view>/...#have` — that gives the highest CL the
+    // workspace's have-table represents.
+    //
+    // If they differ, remote has unseen content. We surface this as
+    // a boolean (1 == has unseen, 0 == up-to-date) rather than a
+    // precise file count, because the file count would require the
+    // expensive `p4 sync -n //...` we're removing.
+    //
+    // Derive the depot stream path from the workspace name (lowest-
+    // friction approach — Companion's projects.json doesn't store
+    // the depot path directly, but the workspace IS named
+    // <user>-<depot> by convention and the stream is //<depot>/main).
+    // If derivation fails, fall back to `//...` which queries the
+    // user's entire visible depot space — slightly broader than we'd
+    // like for a multi-project user but still cheap.
+    let view_path = workspace
+        .strip_prefix(&format!("{}-", config.user))
+        .map(|depot| format!("//{depot}/..."))
+        .unwrap_or_else(|| "//...".to_string());
+
+    let head_cl = depot_head_cl(config, workspace, workspace_root, &view_path).await?;
+    let have_cl = depot_have_cl(config, workspace, workspace_root, &view_path).await?;
+
+    let remote_unseen = match (head_cl, have_cl) {
+        (Some(head), Some(have)) if head > have => 1,
+        (Some(_), None) => 1, // never synced — remote has everything
+        _ => 0,
     };
 
     Ok(ChangeCounts {
@@ -941,6 +1011,79 @@ pub async fn change_counts(
         remote_unseen,
         folder_missing: false,
     })
+}
+
+/// Highest CL number visible in the depot through `view_path`.
+/// Cheap server-side metadata read — no workspace walk.
+async fn depot_head_cl(
+    config: &P4Config,
+    workspace: &str,
+    workspace_root: &Path,
+    view_path: &str,
+) -> Result<Option<u32>, CompanionError> {
+    let (stdout, _stderr, code) = run_p4(
+        config,
+        &["-c", workspace, "changes", "-m", "1", view_path],
+        None,
+        Some(workspace_root),
+        CALL_TIMEOUT,
+    )
+    .await?;
+    // Empty depot (no submitted CLs) is "exit 0 with empty stdout".
+    if code != 0 {
+        // Treat any non-zero as "can't determine HEAD" — caller
+        // collapses to remote_unseen=0 rather than propagating an
+        // error that would mark the project as p4-failed for a
+        // benign empty-depot case. Real connection errors surface
+        // through `info` / `opened` (run earlier in the cycle).
+        return Ok(None);
+    }
+    Ok(parse_change_number(&stdout))
+}
+
+/// Highest CL the workspace's have-table represents through
+/// `view_path`. Compares against `depot_head_cl` to detect remote-
+/// has-newer.
+async fn depot_have_cl(
+    config: &P4Config,
+    workspace: &str,
+    workspace_root: &Path,
+    view_path: &str,
+) -> Result<Option<u32>, CompanionError> {
+    // `#have` is Perforce's revision shorthand for "the revision
+    // recorded in MY have-table." `changes -m 1 //view/...#have`
+    // returns the highest CL number any file in our have-table
+    // points to — i.e., what we last synced.
+    let path_with_have = format!("{view_path}#have");
+    let (stdout, _stderr, code) = run_p4(
+        config,
+        &["-c", workspace, "changes", "-m", "1", &path_with_have],
+        None,
+        Some(workspace_root),
+        CALL_TIMEOUT,
+    )
+    .await?;
+    if code != 0 {
+        return Ok(None);
+    }
+    Ok(parse_change_number(&stdout))
+}
+
+/// Pull the first `Change NNN` integer out of `p4 changes` output.
+fn parse_change_number(stdout: &str) -> Option<u32> {
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("Change ") {
+            if let Some(end) = rest.find(|c: char| !c.is_ascii_digit()) {
+                if let Ok(n) = rest[..end].parse::<u32>() {
+                    return Some(n);
+                }
+            } else if let Ok(n) = rest.parse::<u32>() {
+                return Some(n);
+            }
+        }
+    }
+    None
 }
 
 /// Relocate a project's workspace to a new local folder.

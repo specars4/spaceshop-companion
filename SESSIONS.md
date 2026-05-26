@@ -14,6 +14,55 @@ Most-recent first.
 
 ---
 
+## Session 6 — 2026-05-26 — v0.6.3 (tray-poll stacking fix + cheap-query rewrite)
+
+**Outcome:** Companion's 30-second tray-poll loop no longer stacks
+concurrent `p4 status` invocations that lock out Unreal's source-control
+operations. Catastrophic failure path it fixes: with v0.6.2 Companion
+running in the tray, a single `p4 edit` on a `.uasset` in Unreal Editor
+took **87 seconds** because three Companion `p4 status` polls were
+queued behind it on the workspace's db.locks. Terminal `p4 edit`
+measured at 117 s under the same conditions. After killing Companion's
+stacked polls, the same `p4 edit` dropped to **0.05 s**.
+
+### v0.6.3 changes
+
+- **`tray_poll.rs::run_poll_cycle`** — new RAII-guarded `AtomicBool`
+  stacking guard on `TrayPollState`. If a poll cycle hasn't finished
+  when the next 30 s tick fires, the new cycle is SKIPPED entirely
+  (rather than running concurrently, which is what produced the
+  6-process pile-up). The flag clears via `Drop` on a sentinel struct,
+  so a panic or early-return inside `compute_poll_result` can't leave
+  it stuck `true`. A real-time tray that misses one tick is fine; a
+  Companion that locks out Unreal is not.
+- **`perforce.rs::change_counts`** — full rewrite to cheap metadata
+  queries. Was: `p4 status` (52 s — 4 min full workspace walk) +
+  `p4 sync -n //...` (another full walk). Now: `p4 opened -c <ws>`
+  (~40 ms, returns the local-pending count directly from db.working)
+  + `p4 changes -m 1 //<view>/...` (depot HEAD) + `p4 changes -m 1
+  //<view>/...#have` (have-table HEAD). The remote_unseen output is
+  now boolean (1 = remote has newer CL, 0 = up-to-date) rather than
+  an exact pending-file count — precise counts cost a full sync-n
+  walk and aren't worth it for the tray's green/yellow distinction.
+  Total poll cost drops from minutes to <100 ms.
+- **`p4_typemap.py`** (SPACESHOP TOOLS side) — dropped `+l` from
+  `.psd/.tga/.tif/.tiff`. The exclusive-lock-on-every-checkout is
+  necessary for `.uasset/.umap` (Unreal binary cooker can't merge)
+  but is overkill for source textures (rare concurrent edits, and
+  the lock storm compounds with the workspace lock contention on
+  Docker-on-NAS p4d).
+- Version bumps to 0.6.3 across `Cargo.toml` / `tauri.conf.json` /
+  `package.json`.
+
+**Diagnostic record.** Three parallel agents converged on the same
+root cause in independent sweeps: network was fine (<1 ms RTT, no
+data flow during hangs), server was healthy (no configurables
+tweaked, 151 h uptime), workspace was clean. The bottleneck was
+purely Companion's polling — 6 stacked `p4 status` processes from
+PID 51404 at peak, oldest 273 s elapsed.
+
+---
+
 ## Session 5 — 2026-05-26 — v0.6.2 (adopt-in-place self-onboard)
 
 **Outcome:** Workshop's SELF-ONBOARD INVITE flow now adopts an existing

@@ -29,6 +29,7 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -64,6 +65,15 @@ pub struct TrayPollState {
     /// Latest via the main window doesn't touch this yet (separate
     /// agent's polling owns that path).
     pub pulling: Arc<Mutex<HashSet<String>>>,
+    /// **Stacking guard (v0.6.3).** Set to `true` when a poll cycle is
+    /// running; the 30 s tick checks this and skips the cycle entirely
+    /// if a prior poll is still in flight. Prevents the catastrophic
+    /// "Companion piles up six concurrent `p4 status` against an
+    /// 8000-file workspace" failure mode that locked out Unreal in
+    /// Session 5. Cleared by the poll loop in a `finally`-equivalent
+    /// drop guard so it can never get stuck `true` even if the cycle
+    /// errors mid-flight.
+    pub poll_in_flight: Arc<AtomicBool>,
     /// Notify the poll loop to exit early at app shutdown.
     pub shutdown: Arc<Notify>,
 }
@@ -73,6 +83,7 @@ impl TrayPollState {
         Self {
             icons,
             pulling: Arc::new(Mutex::new(HashSet::new())),
+            poll_in_flight: Arc::new(AtomicBool::new(false)),
             shutdown: Arc::new(Notify::new()),
         }
     }
@@ -295,6 +306,43 @@ pub fn spawn_poll_task<R: Runtime>(app: AppHandle<R>) {
 }
 
 async fn run_poll_cycle<R: Runtime>(app: &AppHandle<R>) {
+    // v0.6.3 stacking guard. The poll cycle can legitimately take
+    // longer than POLL_INTERVAL (30 s) on a real-world Unreal project
+    // — `change_counts` walks the whole workspace via `p4 status` +
+    // `p4 sync -n`, which we've measured at 1-4 minutes on 8000-file
+    // projects. Without this guard, every 30 s tick fired a NEW p4
+    // status while the previous one was still running, six in flight
+    // simultaneously, each holding a workspace read lock — which
+    // starved every other p4 op on the same workspace (Unreal's
+    // `p4 edit` blocking for 90+ s, terminal `p4 edit` measured at
+    // 117 s). The fix is brutal but correct: if a poll is in flight,
+    // SKIP THIS CYCLE. The next tick will retry. A real-time tray
+    // icon that stops updating for one tick is fine; a Companion
+    // that locks out Unreal is not.
+    let in_flight = {
+        let state = app.state::<TrayPollState>();
+        state.poll_in_flight.clone()
+    };
+    if in_flight
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        debug!("tray poll: prior cycle still in flight — skipping");
+        return;
+    }
+
+    // RAII guard so the flag is cleared no matter how we exit (panic,
+    // early-return, normal completion). Without this, a single panic
+    // inside compute_poll_result would leave the flag stuck true
+    // forever and the tray would silently stop polling.
+    struct ClearOnDrop(Arc<AtomicBool>);
+    impl Drop for ClearOnDrop {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::Release);
+        }
+    }
+    let _guard = ClearOnDrop(in_flight);
+
     let result = compute_poll_result(app).await;
     apply_poll_result(app, &result);
 }

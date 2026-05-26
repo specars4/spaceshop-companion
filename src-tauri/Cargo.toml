@@ -1,6 +1,6 @@
 [package]
 name = "spaceshop-companion"
-version = "0.6.3"
+version = "0.6.4"
 description = "Spaceshop Companion — contractor onboarding for Spaceshop projects"
 authors = ["Spaceshop Studios"]
 edition = "2021"

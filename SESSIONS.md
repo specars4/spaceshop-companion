@@ -14,6 +14,53 @@ Most-recent first.
 
 ---
 
+## Session 7 — 2026-05-26 — v0.6.4 (list_changes uses `p4 opened`, fixes Review-and-Submit "no local changes" lie)
+
+**Outcome:** Companion's "Review & Submit" page now actually shows
+pending changes from the workspace. Reproducible bug it kills:
+operator had one file opened for add (`NewMaterial.uasset`) in the
+default changelist, opened Companion → Review & Submit, and the page
+showed grayed-out "no local changes" — wrong, the file was clearly
+in `p4 opened`. Forced operator to submit via Unreal's source-control
+panel instead.
+
+### Root cause
+
+`perforce.rs::list_changes` (the function the Review & Submit page
+calls) ran `p4 -c <ws> status` with the 30-second `CALL_TIMEOUT`.
+Measured time on the operator's real VRAYLAR_Neymarc workspace:
+**66 seconds.** So `list_changes` errored out at 30 s, the error
+collapsed to an empty `Ok(Vec::new())` (the catch-all for "not
+opened on this client" was matching too aggressively in the error
+path), and the UI surfaced that as "no local changes."
+
+### v0.6.4 changes
+
+- **`perforce.rs::list_changes`** — full rewrite to use
+  `p4 -ztag -c <ws> opened` instead of `p4 status`. Parses tagged
+  records (depotFile / clientFile / action / etc.) directly, maps
+  action verbs (`edit`/`add`/`branch`/`move/add`/`delete`/`move/delete`/
+  `integrate`) to the M/A/D status codes the frontend expects.
+  Sub-100 ms instead of 60+ seconds. Caveat: `p4 opened` doesn't
+  catch unmanaged disk changes (files modified without `p4 edit`
+  first) — that's the right trade since Unreal auto-runs `p4 edit`
+  on checkout and `p4 add` on new assets. A future "Scan for
+  unmanaged files" button (running `p4 reconcile -n` on demand)
+  is the right home for the rarer case.
+
+### Forensic note
+
+This bug was masked by Session 6's tray-poll fix. Pre-v0.6.3, the
+tray-poll lock storm + Companion timing-out made every Companion
+view feel broken — the "Review & Submit" Failure was indistinguishable
+from a hundred other things. Once v0.6.3 calmed the polls, the
+specific `list_changes` timeout surfaced as a clean reproducible bug.
+Worth noting because the bug had been present since `list_changes`
+was first written — the operator just hadn't been able to isolate it
+until the noisier issues cleared.
+
+---
+
 ## Session 6 — 2026-05-26 — v0.6.3 (tray-poll stacking fix + cheap-query rewrite)
 
 **Outcome:** Companion's 30-second tray-poll loop no longer stacks

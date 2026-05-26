@@ -791,31 +791,71 @@ pub struct ChangedFile {
 ///
 /// Local path is RELATIVE to the workspace root; we join with the root
 /// to produce an absolute path for the UI (Reveal-in-Explorer needs it).
+/// List the files this workspace has opened for action (edit/add/delete)
+/// in any changelist (default or numbered).
+///
+/// **v0.6.4 rewrite — `p4 opened` instead of `p4 status`.**
+///
+/// Pre-v0.6.4, `list_changes` called `p4 -c <ws> status` which walks
+/// every file in the workspace comparing disk vs depot. On a real-world
+/// Unreal project (48 GB / 8000+ files, measured on VRAYLAR_Neymarc)
+/// that call takes 52-66 seconds, well over the 30-second
+/// `CALL_TIMEOUT`. Result: the "Review & Submit" page in the main
+/// window would either time out (showing "no local changes" — wrong)
+/// or hang the UI mid-spinner. Operator's reproducible complaint:
+/// "i had one file marked for add, and one checked out, yet when i
+/// go to companion the review & submit is grayed out and it says no
+/// local changes."
+///
+/// **The fix.** Use `p4 -ztag -c <ws> opened` instead. `p4 opened`
+/// reads from p4d's `db.working` table for this client only — purely
+/// server-side metadata, sub-100 ms. Returns every file the workspace
+/// has open for edit/add/delete in ANY changelist, with both the
+/// depotFile and clientFile paths in tagged form for clean parsing.
+///
+/// **What this loses.** `p4 opened` does NOT catch unmanaged disk
+/// changes — files that were modified or created on disk without
+/// being opened via `p4 edit` / `p4 add`. Unreal's source-control
+/// plugin auto-runs `p4 edit` on checkout and `p4 add` on new assets,
+/// so for the standard UE workflow we don't lose anything. Manual
+/// notepad edits to `Config/Default*.ini` or similar would be
+/// invisible until the user runs Reconcile explicitly (a future
+/// "Scan for unmanaged files" button is the right home for that —
+/// not the every-time path).
 pub async fn list_changes(
     config: &P4Config,
     workspace: &str,
     workspace_root: &Path,
 ) -> Result<Vec<ChangedFile>, CompanionError> {
     verify_workspace_root_exists(workspace_root)?;
+
+    // `-ztag` produces one tagged record per opened file:
+    //   ... depotFile //depot/path/file.uasset
+    //   ... clientFile //workspace-name/path/file.uasset
+    //   ... rev 1
+    //   ... haveRev none|N
+    //   ... action add|edit|delete|...
+    //   ... change default|N
+    //   ... type binary+l|binary|text|...
+    //   ... user arsen
+    //   ... client arsen-vraylar-neymarcbrothers
+    //   (blank line separator)
     let (stdout, stderr, code) = run_p4(
         config,
-        &["-c", workspace, "status"],
+        &["-ztag", "-c", workspace, "opened"],
         None,
         Some(workspace_root),
         CALL_TIMEOUT,
     )
     .await?;
 
-    // "File(s) not opened on this client." / empty output → no changes.
-    let combined = format!("{stdout}\n{stderr}").trim().to_string();
-    if combined.is_empty() || combined.to_lowercase().contains("not opened on this client") {
-        if code != 0 {
-            // Some versions return exit 1 with that message; treat as empty.
+    // "File(s) not opened on this client." is exit-1 + that message
+    // in stderr — the benign "nothing open" case, NOT an error.
+    if code != 0 {
+        let stderr_lc = stderr.to_lowercase();
+        if stderr_lc.contains("not opened on this client") {
             return Ok(Vec::new());
         }
-        return Ok(Vec::new());
-    }
-    if code != 0 {
         return Err(CompanionError::Perforce(if !stderr.trim().is_empty() {
             stderr
         } else {
@@ -823,56 +863,84 @@ pub async fn list_changes(
         }));
     }
 
-    let mut out = Vec::new();
+    // Workspace name as it appears in `clientFile` records — used to
+    // strip the leading `//<workspace>/` and rejoin against the
+    // local workspace root for the `local_path` field consumers expect.
+    let client_prefix = format!("//{workspace}/");
+
+    let mut out: Vec<ChangedFile> = Vec::new();
+    let mut cur_depot: Option<String> = None;
+    let mut cur_client: Option<String> = None;
+    let mut cur_action: Option<String> = None;
+
+    let flush = |depot: &mut Option<String>,
+                 client: &mut Option<String>,
+                 action: &mut Option<String>,
+                 out: &mut Vec<ChangedFile>| {
+        if let (Some(d), Some(c), Some(a)) =
+            (depot.take(), client.take(), action.take())
+        {
+            // action → ChangedFile status code that the frontend renders
+            //   edit       → "M" (modified)
+            //   add / branch → "A" (added)
+            //   delete / move/delete → "D" (deleted)
+            // Anything we don't recognize is dropped rather than mis-
+            // labeled — better to under-report than to surface a "?".
+            let status = match a.as_str() {
+                "edit" | "integrate" => "M",
+                "add" | "branch" | "move/add" => "A",
+                "delete" | "move/delete" => "D",
+                _ => return,
+            };
+
+            // Strip the `//<workspace>/` prefix from clientFile and
+            // rejoin against the local workspace_root. p4 produces a
+            // forward-slash path; PathBuf::join handles separator
+            // conversion on Windows.
+            let rel = if let Some(rest) = c.strip_prefix(&client_prefix) {
+                rest.to_string()
+            } else {
+                // clientFile didn't start with our workspace prefix —
+                // could be from an alternate AltRoots binding. Use the
+                // whole clientFile as the local path lossily.
+                c.clone()
+            };
+            let local_path = workspace_root.join(&rel).to_string_lossy().into_owned();
+            let size = std::fs::metadata(&local_path).ok().map(|m| m.len());
+            out.push(ChangedFile {
+                status: status.into(),
+                local_path,
+                depot_path: d,
+                size,
+            });
+        }
+    };
+
     for line in stdout.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("... ") {
+        if trimmed.is_empty() {
+            // Blank line marks the end of one record. Flush whatever
+            // we've accumulated.
+            flush(&mut cur_depot, &mut cur_client, &mut cur_action, &mut out);
             continue;
         }
-
-        // Try " - reconcile to " first (file not yet opened), then
-        // " - submit change <N> to " (file already in a changelist).
-        // After splitting, `right` should look like "<action> <depot>#<rev>".
-        let (left, right_with_action) = if let Some((l, r)) =
-            trimmed.split_once(" - reconcile to ")
-        {
-            (l, r)
-        } else if let Some((l, r)) = trimmed.split_once(" - submit change ") {
-            // r looks like "12 to add //depot/foo#1" — strip "<N> to ".
-            let after_to = r.split_once(" to ").map(|(_, rest)| rest);
-            match after_to {
-                Some(rest) => (l, rest),
-                None => continue,
-            }
-        } else {
+        let Some(rest) = trimmed.strip_prefix("... ") else {
+            // Unexpected non-tag line — skip without touching state.
             continue;
         };
-
-        let local_rel = left.trim();
-        let Some((action, depot_with_rev)) = right_with_action.trim().split_once(' ') else {
+        let Some((key, val)) = rest.split_once(' ') else {
             continue;
         };
-        let status = match action {
-            "edit" => "M",
-            "add" => "A",
-            "delete" => "D",
-            _ => continue,
+        match key {
+            "depotFile" => cur_depot = Some(val.to_string()),
+            "clientFile" => cur_client = Some(val.to_string()),
+            "action" => cur_action = Some(val.to_string()),
+            _ => {}
         }
-        .to_string();
-        let depot_path = depot_with_rev
-            .split('#')
-            .next()
-            .unwrap_or(depot_with_rev)
-            .to_string();
-        let local_path = workspace_root.join(local_rel).to_string_lossy().into_owned();
-        let size = std::fs::metadata(&local_path).ok().map(|m| m.len());
-        out.push(ChangedFile {
-            status,
-            local_path,
-            depot_path,
-            size,
-        });
     }
+    // Trailing record (no blank line at EOF) — flush.
+    flush(&mut cur_depot, &mut cur_client, &mut cur_action, &mut out);
+
     Ok(out)
 }
 

@@ -45,6 +45,52 @@ pub(super) static TICKET_FILE_LOCK: Mutex<()> = Mutex::new(());
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// v0.6.7 — parallel sync flag, applied to every `p4 sync` invocation
+/// that transfers files (sync_workspace, force_resync_inner,
+/// repair_workspace step 2).
+///
+/// **Why parallel sync.** Companion v0.6.6 and earlier ran `p4 sync //...`
+/// as a single long-lived TCP stream. On Tailscale-relayed
+/// connections (no direct P2P NAT-traversal between contractor and
+/// the NAS), the relay path is DERP, which has an idle-TCP timeout
+/// in the multi-minute range. A 48 GB Unreal-project sync on a
+/// slow link can keep the stream "active" for hours, but if any
+/// individual file transfer paused enough to trigger the relay's
+/// reset, the whole sync died with `WSAECONNRESET` — and the
+/// server-side have-table never committed the partial files, so a
+/// retry re-downloaded from zero. (Session 9: Shakira's first sync
+/// failed at file 2038 of 8010.)
+///
+/// `--parallel` splits the sync into N short-lived parallel streams
+/// + per-stream batches. Each batch is small enough (≤8 MB) and
+/// short enough that a single batch failing is cheap to retry,
+/// and the success of completed batches is committed to the
+/// have-table incrementally — survives a relay reset.
+///
+/// Server-side `net.parallel.max=8` was set during Session 9. If a
+/// future server lowers it back to 0, `--parallel` would be silently
+/// ignored by `p4 sync` (no error), and behavior degrades to v0.6.6
+/// single-stream — slower but still correct.
+///
+/// Tuning:
+///   - threads=4: 4 concurrent TCP streams. Higher = more upload to
+///     server per second, but more memory client-side. 4 is the
+///     Perforce-recommended default for client sync on small teams.
+///   - batch=16, batchsize=8m: each stream handles batches of 16
+///     files OR 8 MB worth, whichever fills first. Keeps each
+///     network exchange well under the DERP relay's idle timeout.
+///   - min=1, minsize=1m: don't bother parallelizing when there's
+///     less than 1 file or 1 MB to transfer (low overhead path for
+///     daily Pull-Latest after onboarding).
+// IMPORTANT — values are raw byte counts. The `K` / `M` suffix
+// shorthand is rejected by p4 (verified live against
+// 100.82.0.8:1666 — "Usage: threads=N,batch=N,batchsize=N,min=N,
+// minsize=N" with no mention of suffixes). Raw bytes:
+//   batchsize=8388608  → 8 MB
+//   minsize=1048576    → 1 MB
+const PARALLEL_SYNC_FLAG: &str =
+    "--parallel=threads=4,batch=16,batchsize=8388608,min=1,minsize=1048576";
+
 /// v0.6.6 — dedicated timeout for `p4 client -i` (workspace-spec write).
 /// `client -i` is metadata-only on the server (writes a row to
 /// db.clients) and should be <100 ms on a healthy server. But it
@@ -564,12 +610,14 @@ fn extract_stream_from_view_line(line: &str) -> Option<String> {
     Some(format!("//{depot}/{stream}"))
 }
 
-/// Initial onboarding sync. Prepends the same revert+flush sequence as
-/// `force_resync` so re-onboarding into an existing workspace heals
-/// pending stuck-opens (e.g., files left "open for delete" from a
-/// previous failed Submit) before running `p4 sync //...`. Without this,
-/// a re-onboard can leave the folder empty and the user unable to
-/// recover without CLI surgery — bug class we hit on 2026-05-22.
+/// Initial onboarding sync. Reuses force_resync — onboarding has the
+/// same "trust the server, nuke local state" semantics. Stream binding
+/// gets auto-healed too as a side effect. Re-onboarding into an
+/// existing workspace heals pending stuck-opens (e.g., files left
+/// "open for delete" from a previous failed Submit) before running
+/// `p4 sync //...`. Without this, a re-onboard can leave the folder
+/// empty and the user unable to recover without CLI surgery — bug
+/// class we hit on 2026-05-22.
 pub async fn initial_sync<F>(
     config: &P4Config,
     workspace: &str,
@@ -579,9 +627,6 @@ pub async fn initial_sync<F>(
 where
     F: FnMut(&str),
 {
-    // Reuse force_resync's revert+flush+sync logic — onboarding has the
-    // same "trust the server, nuke local state" semantics. Stream binding
-    // gets auto-healed too as a side effect.
     force_resync(config, workspace, workspace_root, on_progress).await
 }
 
@@ -780,7 +825,7 @@ where
         config,
         workspace,
         workspace_root,
-        &["sync", "//..."],
+        &["sync", PARALLEL_SYNC_FLAG, "//..."],
         on_progress,
         "pull",
     )
@@ -1539,7 +1584,7 @@ where
         config,
         workspace,
         workspace_root,
-        &["sync", "//..."],
+        &["sync", PARALLEL_SYNC_FLAG, "//..."],
         on_progress,
         "force resync",
     )
@@ -1602,7 +1647,7 @@ where
         config,
         workspace,
         workspace_root,
-        &["sync", "-f", "//..."],
+        &["sync", PARALLEL_SYNC_FLAG, "-f", "//..."],
         on_progress,
         "repair sync",
     )

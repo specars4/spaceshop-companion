@@ -14,6 +14,79 @@ Most-recent first.
 
 ---
 
+## Session 10 — 2026-05-26 — v0.6.7 (parallel sync — fixes contractor onboarding WSAECONNRESET)
+
+**Outcome:** Companion's `p4 sync` now runs with `--parallel=threads=4`
+batched into 8 MB chunks. First adversarial-agent-caught release in
+this session: a broken `sync -k` "resume" implementation was shipped
+to the audit and rejected before publish; replaced with the correct
+parallel-sync fix that addresses the actual root cause.
+
+### What happened
+
+Shakira (first real contractor onboarding through v0.6.5) hit
+`WSAECONNRESET, An existing connection was forcibly closed by the
+remote host` 25 % through her 8010-file project sync (file 2038
+of 8010). Server-side investigation showed:
+
+- Her workspace was correctly created on the server.
+- Her local disk had ~2038 partial files at `C:\Vraylar`.
+- Her server-side have-table was **empty** — the partial-sync
+  transactions never committed when the TCP reset hit.
+- TRY AGAIN would have called `force_resync` which empties the
+  have-table and re-downloads from scratch — a 12 GB re-transfer
+  giving Tailscale's relay another chance to time out mid-stream.
+
+### Root cause (agent's diagnosis)
+
+Tailscale-relayed TCP between Shakira's machine and the NAS
+(no direct P2P NAT-traversal possible) routes through a DERP
+relay with a multi-minute idle-TCP timeout. Companion's pre-v0.6.7
+sync ran as a single long-lived stream against the full 48 GB
+workspace; on a slow link or with any per-file pause, the relay
+killed the connection.
+
+### The fix (v0.6.7)
+
+Server-side: `net.parallel.max=8` set via `p4 configure set` so
+clients are allowed to request parallel sync.
+
+Client-side: new `PARALLEL_SYNC_FLAG` constant applied to all three
+streaming-sync paths (`sync_workspace`, `force_resync_inner`,
+`repair_workspace` step 2):
+
+  `--parallel=threads=4,batch=16,batchsize=8388608,min=1,minsize=1048576`
+
+This splits the sync into 4 concurrent TCP streams, each handling
+8 MB batches at a time. Each batch is short enough to clear the
+DERP idle timeout, and successful batches commit their have-table
+entries incrementally — so a single batch failing is a small,
+cheap-to-retry loss instead of a full re-download.
+
+### What got dropped before publish (the adversarial-agent save)
+
+Initial v0.6.7 draft had a `resume_partial_sync` function that
+ran `p4 sync -k //...` (to "repopulate the have-table from on-disk
+files") followed by `sync //...` (resume). The patch even had a
+multi-paragraph docstring confidently explaining the safety
+argument. The adversarial-audit agent caught that **`sync -k` does
+NOT verify on-disk files** — it unconditionally writes have-table
+entries for the requested revspec. Result on Shakira's box would
+have been: have-table claims 8010 @ HEAD, second `sync //...`
+reports "file(s) up-to-date" and transfers nothing, contractor
+ends silently with 25 % of files on disk + a server view saying
+she's whole. Silent corruption, worse than the original bug.
+
+Replaced entirely with the parallel-sync approach above —
+addresses the root cause (DERP timeout) instead of working around
+the symptom (failed sync needs resume).
+
+Raw-byte form is mandatory: this server's p4d rejected the
+`8M` / `8m` shorthand with `Usage: threads=N,batch=N,batchsize=N,...`
+even though that's the format in some Perforce docs.
+
+---
+
 ## Session 9 — 2026-05-26 — v0.6.6 (polish: close-to-tray notification, friendly p4-timeout, client -i timeout bump, error scrubs)
 
 **Outcome:** Three operator-flagged UX nuisances + three audit findings

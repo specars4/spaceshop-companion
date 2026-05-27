@@ -3626,7 +3626,7 @@ dependencies = [
 
 [[package]]
 name = "spaceshop-companion"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
